@@ -8,13 +8,14 @@ import threading
 from packaging.version import Version
 from update_release import select_update
 
-def start_background(work,success,failure,is_closed=lambda:False):
+def start_background(work,success,failure,is_closed=lambda:False,discard=None):
     def run():
         try:result=work()
         except Exception as exc:
             if not is_closed():failure(str(exc))
         else:
             if not is_closed():success(result)
+            elif discard is not None:discard(result)
     thread=threading.Thread(target=run,daemon=True)
     thread.start()
     return thread
@@ -27,8 +28,12 @@ def fetch_update(url,current_version,get=None):
         import requests
         get=requests.get
     response=get(url,timeout=8)
+    if response.status_code==404:
+        raise ValueError('No release has been published for this update channel yet.')
     response.raise_for_status()
     release=response.json()
+    if not isinstance(release,dict) or not isinstance(release.get('tag_name'),str):
+        raise ValueError('The update service returned an invalid release.')
     result=select_update(release,current_version)
     latest=(release.get('tag_name') or '').removeprefix('v')
     if (not result[0] and latest and not release.get('draft') and not release.get('prerelease')

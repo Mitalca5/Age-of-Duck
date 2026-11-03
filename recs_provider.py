@@ -1,5 +1,6 @@
 """Public aoe2recs profile subscription; no login, scraping loop, or gameplay input."""
 import json
+import math
 import re
 import threading
 import time
@@ -23,7 +24,7 @@ def _catalog_civs():
 
 def canonical_civ(name):
     """Map the provider's civilisation text onto the catalog's name (case, plural, small spelling differences)."""
-    name=(name or '').strip()
+    name=name.strip() if isinstance(name,str) else ''
     if not name:return ''
     if name in CIV_ALIASES:return CIV_ALIASES[name]
     civs=_catalog_civs()
@@ -39,7 +40,9 @@ def canonical_civ(name):
 def profile_updates(message):
     if not isinstance(message,dict):return
     if message.get('cls')==3:
-        for item in message.get('data',[]):yield from profile_updates(item)
+        data=message.get('data')
+        if isinstance(data,list):
+            for item in data:yield from profile_updates(item)
     elif message.get('cls')==13:
         yield message.get('data')
 
@@ -47,10 +50,12 @@ PEAK_MODES={3:'1v1',4:'Teams',13:'EW 1v1',14:'EW Teams'}
 
 def highest_peak(data):
     candidates=[]
-    for ladder in data.get('ladders',[]):
+    ladders=data.get('ladders') if isinstance(data,dict) else None
+    for ladder in ladders if isinstance(ladders,list) else []:
         if not isinstance(ladder,dict):continue
-        value=ladder.get('highest');mode=PEAK_MODES.get(ladder.get('id'))
-        if mode and isinstance(value,(int,float)) and not isinstance(value,bool) and value>0:
+        value=ladder.get('highest');ident=ladder.get('id')
+        mode=PEAK_MODES.get(ident) if type(ident) is int else None
+        if mode and isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>0:
             candidates.append((int(value),mode))
     return max(candidates,key=lambda item:item[0]) if candidates else (None,None)
 
@@ -63,36 +68,43 @@ def fetch_peak(profile_id):
             except websocket.WebSocketTimeoutException:continue
             if not raw:break
             for data in profile_updates(json.loads(raw)):
-                if isinstance(data,dict) and str((data.get('player') or {}).get('id'))==str(profile_id):return highest_peak(data)
+                owner=data.get('player') if isinstance(data,dict) else None
+                if isinstance(owner,dict) and str(owner.get('id'))==str(profile_id):return highest_peak(data)
         raise TimeoutError('Peak profile unavailable')
     finally:ws.close()
 
 def normalize_profile(data,profile_id):
     if not isinstance(data,dict) or not data.get('found'):return None
     owner=data.get('player') or {}
-    if str(owner.get('id'))!=str(profile_id):return None
+    if not isinstance(owner,dict) or str(owner.get('id'))!=str(profile_id):return None
     live=data.get('live')
     if not isinstance(live,dict) or live.get('status')!='ongoing' or live.get('game')!='AoE2':return None
     if not live.get('started') or not live.get('id'):return None
-    rows=live.get('players') or []
+    rows=live.get('players')
+    if not isinstance(rows,list):return None
+    rows=[p for p in rows if isinstance(p,dict)]
     # An aoe2recs profile can combine several in-game accounts (alt / smurf accounts). The live
     # match lists the account that is actually playing, which need not be the profile's own id.
     owned={str(profile_id)}
-    for account in data.get('accounts') or []:
+    accounts=data.get('accounts')
+    for account in accounts if isinstance(accounts,list) else []:
         if isinstance(account,dict) and account.get('id') is not None:owned.add(str(account['id']))
     if not any(str(p.get('id')) in owned for p in rows):return None
-    leaderboard=LEADERBOARDS.get(live.get('leaderboard'))
+    leaderboard_name=live.get('leaderboard')
+    leaderboard=LEADERBOARDS.get(leaderboard_name) if isinstance(leaderboard_name,str) else None
     peak,peak_mode=highest_peak(data)
     players=[]
     for p in rows:
         color=p.get('color_hex','')
         if not isinstance(color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',color):color='#EAF2F9'
         team=p.get('team')
-        if not isinstance(team,int):team=0
+        if type(team) is not int:team=0
+        rating=p.get('rating')
+        if isinstance(rating,bool) or not isinstance(rating,(int,float)) or not math.isfinite(rating) or rating<0:rating=None
         civ=p.get('civilization') or ''
         is_ai=bool(p.get('ai')) or (not p.get('name') and p.get('id') is None)
         players.append(dict(name='AI' if is_ai else str(p.get('name') or ''),is_ai=is_ai,team=team,color=color,
-            civ=canonical_civ(civ),country=p.get('country') or '',rating=p.get('rating'),
+            civ=canonical_civ(civ),country=p.get('country') if isinstance(p.get('country'),str) else '',rating=rating,
             peak=peak if str(p.get('id')) in owned else None,
             peak_mode=peak_mode if str(p.get('id')) in owned else None,
             profile_id=p.get('id'),is_self=str(p.get('id')) in owned))
@@ -100,7 +112,9 @@ def normalize_profile(data,profile_id):
     # Free-for-all: the lobby says so, or every player is alone on their own team (more than two
     # players). Scenario lobbies report this even when the map plays as co-op / fixed teams.
     ffa=live.get('diplomacy')=='FFA' or (len(players)>2 and len(teams)==len(players))
-    match=dict(matchId=live['id'],ffa=ffa,leaderboardId=leaderboard,leaderboardName=live.get('leaderboard') or live.get('type') or 'Live Match',mapName=live.get('rms') or 'Unknown map',started=live['started'],source='aoe2recs',teams=[])
+    mode=next((v for v in (leaderboard_name,live.get('type')) if isinstance(v,str) and v),'Live Match')
+    map_name=live.get('rms')
+    match=dict(matchId=live['id'],ffa=ffa,leaderboardId=leaderboard,leaderboardName=mode,mapName=map_name if isinstance(map_name,str) and map_name else 'Unknown map',started=live['started'],source='aoe2recs',teams=[])
     return match,players,match['leaderboardName'],match['mapName']
 
 class RecsWorker(QObject):
@@ -110,7 +124,7 @@ class RecsWorker(QObject):
     in_game_signal=pyqtSignal(bool)
     provider_status=pyqtSignal(str)
     def __init__(self):
-        super().__init__();self.running=True;self.profile_id=None;self.aoe2_running=False
+        super().__init__();self._state_lock=threading.RLock();self.running=True;self.profile_id=None;self.aoe2_running=False
         self.wake=threading.Event();self.socket=None;self.generation=0;self.last_payload=None;self.live=False;self._cleared=False
         self.peak_pool=ThreadPoolExecutor(max_workers=1);self.peak_tasks={};self.peak_cache={};self.current_data=None
     def _disconnect(self):
@@ -120,13 +134,18 @@ class RecsWorker(QObject):
             except Exception:pass
         self.wake.set()
     def set_game_running_state(self,running):
-        self.aoe2_running=running
-        if not running:self.generation+=1;self._disconnect()
+        with self._state_lock:
+            self.aoe2_running=running
+            if not running:self.generation+=1;self.clear()
+        if not running:self._disconnect()
         else:self.wake.set()
     def set_profile(self,profile_id):
         value=str(profile_id).strip()
         if not value.isdigit():self.profile_error.emit('Please enter a valid numeric profile ID.');return
-        self.profile_id=value;self.generation+=1;self._disconnect()
+        with self._state_lock:
+            if value==self.profile_id:return
+            self.profile_id=value;self.generation+=1;self.clear()
+        self._disconnect()
     def stop(self):
         self.running=False;self._disconnect();self.peak_pool.shutdown(wait=False,cancel_futures=True)
     def clear(self):
@@ -136,6 +155,8 @@ class RecsWorker(QObject):
         if not self._cleared:self.not_in_game.emit()
         self._cleared=True
     def accept(self,data,pid,generation):
+        with self._state_lock:self._accept(data,pid,generation)
+    def _accept(self,data,pid,generation):
         if generation!=self.generation or pid!=self.profile_id:return
         result=normalize_profile(data,pid)
         if result is None:self.clear();return
@@ -150,6 +171,7 @@ class RecsWorker(QObject):
         if not self.live:self.in_game_signal.emit(True)
         self.live=True;self._cleared=False
     def enrich_peaks(self,pid,generation):
+        if not self.running or generation!=self.generation or pid!=self.profile_id:return
         changed=False
         for player_id,future in list(self.peak_tasks.items()):
             if future.done():
@@ -160,6 +182,7 @@ class RecsWorker(QObject):
         if changed and self.current_data:self.accept(self.current_data,pid,generation)
         if not self.current_data:return
         for player in (self.current_data.get('live') or {}).get('players',[]):
+            if not isinstance(player,dict):continue
             player_id=str(player.get('id'))
             if not player_id.isdigit() or player_id==pid or player_id in self.peak_tasks:continue
             cached=self.peak_cache.get(player_id)
@@ -185,7 +208,8 @@ class RecsWorker(QObject):
                         if not raw:raise ConnectionError('Live feed closed')
                         for data in profile_updates(json.loads(raw)):
                             # Ignore late responses belonging to another profile.
-                            if isinstance(data,dict) and data.get('found') and str((data.get('player') or {}).get('id'))!=pid:continue
+                            owner=data.get('player') if isinstance(data,dict) else None
+                            if isinstance(owner,dict) and str(owner.get('id'))!=pid:continue
                             self.accept(data,pid,generation);received=time.monotonic();confirmed=True;delay=2
                             self.provider_status.emit('aoe2recs live feed')
                     except websocket.WebSocketTimeoutException:pass

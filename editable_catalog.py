@@ -4,7 +4,6 @@ import copy
 def merge_changes(target,seed,edited):
     result=copy.deepcopy(target)
     if not isinstance(seed,dict) or not isinstance(edited,dict):return result
-    for key in seed.keys()-edited.keys():result.pop(key,None)
     for key,value in edited.items():
         if key in seed and value==seed[key]:continue
         if isinstance(value,dict) and isinstance(seed.get(key),dict) and isinstance(result.get(key),dict):
@@ -14,14 +13,16 @@ def merge_changes(target,seed,edited):
 
 def merge_availability(target,seed,edited):
     result=copy.deepcopy(target)
-    for category in set(seed)|set(edited):
+    if not isinstance(seed,dict) or not isinstance(edited,dict):return result
+    for category in edited:
         before=seed.get(category,{})
         after=edited.get(category,{})
         if not isinstance(before,dict) or not isinstance(after,dict):continue
-        for unit in set(before)|set(after):
+        for unit in after:
             if unit in before and unit in after and before[unit]==after[unit]:continue
-            available=after.get(unit,False)
-            groups=[values for values in result.values() if unit in values]
+            available=after[unit]
+            if not isinstance(available,bool):continue
+            groups=[values for values in result.values() if isinstance(values,dict) and unit in values]
             if groups:
                 for values in groups:values[unit]=available
             else:result.setdefault(category,{})[unit]=available
@@ -51,6 +52,6 @@ def apply_catalog_edits(catalog,seed_civs,edited_civs,seed_units,edited_units):
             if not isinstance(unit,dict):continue
             seed=seed_units.get(name,{})
             if not isinstance(seed,dict):continue
-            if any(key in unit and unit[key]!=seed.get(key) for key in ('strong_vs','countered_by')):
+            if name in result['units'] and any(key in unit and unit[key]!=seed.get(key) for key in ('strong_vs','countered_by')):
                 result['units'][name]['source']='custom'
     return result

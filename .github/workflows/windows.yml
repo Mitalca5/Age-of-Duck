@@ -32,7 +32,10 @@ jobs:
           test_civ_coverage test_techtree_catalog test_packaging test_game_data
           test_counter_targets test_reminder_sessions test_tc_lifecycle
           test_update_io test_update_background test_editable_catalog
-          test_preference_io test_recs_provider
+          test_preference_io test_recs_provider test_fork_regressions
+          test_overlay_layout test_companion_controls test_companion_focus
+          test_hud_calibration test_settings_window test_tc_panel
+          test_housed_fallback test_villager_robustness
       - name: Build the Windows application
         run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
       - name: Check packaged runtime resources

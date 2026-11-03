@@ -1,5 +1,10 @@
 """Keep network work off the GUI thread; dialogs and elevation stay on it."""
 import ctypes
+from pathlib import Path
+
+def discard_download(path):
+    try:Path(path).unlink(missing_ok=True)
+    except OSError:pass
 from ctypes import wintypes
 from PyQt5.QtCore import QObject,pyqtSignal,pyqtSlot
 from PyQt5.QtWidgets import QMessageBox,QSystemTrayIcon
@@ -17,8 +22,8 @@ class UpdateController(QObject):
         self.checked.connect(self.on_checked);self.downloaded.connect(self.on_downloaded);self.failed.connect(self.on_failed)
         app.aboutToQuit.connect(self.close)
     def close(self):self.closed=True
-    def background(self,work,signal):
-        return start_background(work,signal.emit,self.failed.emit,lambda:self.closed)
+    def background(self,work,signal,discard=None):
+        return start_background(work,signal.emit,self.failed.emit,lambda:self.closed,discard)
     def finish(self):self.busy=False;self.action.setEnabled(True)
     def check(self):
         if self.busy or self.closed:return
@@ -26,6 +31,7 @@ class UpdateController(QObject):
         self.background(lambda:fetch_update(self.url,self.current_version),self.checked)
     @pyqtSlot(object)
     def on_checked(self,result):
+        if self.closed:return
         version,url=result
         if version is None:
             self.finish();QMessageBox.information(self.parent_window(),'No Update','You have the latest version.');return
@@ -33,16 +39,18 @@ class UpdateController(QObject):
         if answer!=QMessageBox.Yes:self.finish();return
         self.version=version
         self.tray.showMessage('Updating','Downloading installer...',QSystemTrayIcon.Information)
-        self.background(lambda:download_installer(url),self.downloaded)
+        self.background(lambda:download_installer(url),self.downloaded,discard_download)
     @pyqtSlot(str)
     def on_downloaded(self,path):
+        if self.closed:discard_download(path);return
         execute=ctypes.windll.shell32.ShellExecuteW
         execute.argtypes=[wintypes.HWND,wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.LPCWSTR,ctypes.c_int]
         execute.restype=ctypes.c_void_p
         try:launch_installer(path,self.version,self.marker,execute)
-        except Exception as exc:self.on_failed(str(exc));return
+        except Exception as exc:discard_download(path);self.on_failed(str(exc));return
         self.finish()
         self.tray.showMessage('Updating','Installer started. Complete its prompts to update Age of Duck.',QSystemTrayIcon.Information)
     @pyqtSlot(str)
     def on_failed(self,message):
+        if self.closed:return
         self.finish();self.tray.showMessage('Update Error',message,QSystemTrayIcon.Critical)

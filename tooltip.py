@@ -91,7 +91,8 @@ def set_chevron(button, expanded):
 def load_json(path, fallback):
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            value = json.load(f)
+            return value if isinstance(value,type(fallback)) else fallback
     except Exception:
         return fallback
 

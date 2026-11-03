@@ -43,6 +43,7 @@ class BuildOrders:
   if not self.prefs.get('flow_list_layout'):
    self.prefs.pop('position',None);self.prefs['flow_list_layout']=True;self.save()
   self.cue_text='';self.cue_until=0;self.focus_hold_until=0
+  self.voice_failed=False;self.voice_wait_since=None
   self.audio_checkbox=None;self.enabled_checkbox=None
   # The guide and the Idle / Housed window share their own size, independent of the main overlay.
   self.scale=getattr(tc,'panel_scale',main.scale_factor)
@@ -109,28 +110,43 @@ class BuildOrders:
   use.clicked.connect(choose);listing.itemDoubleClicked.connect(lambda _item:choose());dialog.setWindowModality(Qt.NonModal);dialog.show();dialog.raise_();dialog.activateWindow()
  def load(self,path):
   order=load_order(path);self.pause_audio();self.voice.reset();self.order=order;self.progress=Progress(order);self.prefs['selected']=Path(path).name;self.save();self.status='Waiting for villager count'
-  if self.process and self.process.poll() is None:self.process.kill()
-  payload=[dict(index=i,text=s.text) for i,s in enumerate(order.steps)];key=hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:24]
-  self.cache=self.folder/'.voice-cache'/key;self.cache.mkdir(parents=True,exist_ok=True);manifest=self.cache/'speech.json';manifest.write_text(json.dumps(payload),encoding='utf-8')
-  if not all((self.cache/f'{i}.wav').is_file() for i in range(len(payload))):
-   script=(self.assets/'build_order_voice.ps1').read_text(encoding='utf-8-sig').split('\n',1)[1]
-   command='$Manifest=$env:AGEOFDUCK_SPEECH_MANIFEST; $Output=$env:AGEOFDUCK_SPEECH_OUTPUT; '+script
-   env=os.environ.copy();env.update(AGEOFDUCK_SPEECH_MANIFEST=str(manifest),AGEOFDUCK_SPEECH_OUTPUT=str(self.cache))
-   with (self.cache/'generation.log').open('w') as log:
-    self.process=subprocess.Popen(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],env=env,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
-  else:self.process=None
+  self.stop_generation()
+  self.voice_failed=False;self.voice_wait_since=None;self.cache=None
+  try:
+   payload=[dict(index=i,text=s.text) for i,s in enumerate(order.steps)];key=hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:24]
+   self.cache=self.folder/'.voice-cache'/key;self.cache.mkdir(parents=True,exist_ok=True);manifest=self.cache/'speech.json';manifest.write_text(json.dumps(payload),encoding='utf-8')
+   if not all((self.cache/f'{i}.wav').is_file() for i in range(len(payload))):
+    script=(self.assets/'build_order_voice.ps1').read_text(encoding='utf-8-sig').split('\n',1)[1]
+    command='$Manifest=$env:AGEOFDUCK_SPEECH_MANIFEST; $Output=$env:AGEOFDUCK_SPEECH_OUTPUT; '+script
+    env=os.environ.copy();env.update(AGEOFDUCK_SPEECH_MANIFEST=str(manifest),AGEOFDUCK_SPEECH_OUTPUT=str(self.cache))
+    with (self.cache/'generation.log').open('w') as log:
+     self.process=subprocess.Popen(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],env=env,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
+  except (OSError,ValueError,IndexError):
+   self.voice_failed=True;self.status='Voice unavailable — continuing with visual instructions'
+ def stop_generation(self):
+  if self.process and self.process.poll() is None:
+   try:self.process.kill()
+   except OSError:pass
+  self.process=None
+ def visual_fallback(self,step,now):
+  self.voice_failed=True;self.audio_busy=False;self.voice_wait_since=None
+  self.deadline=now+(10 if '.' in step.id else 3)
+  self.status='Voice unavailable — continuing with visual instructions'
+  self.stop_generation()
  def restart(self):
   self.pause_audio()
   self.voice.reset()
   if self.progress:self.progress.reset()
   self.status='New game — waiting for villager count'
  def pause_audio(self,clear_visual=True):
-  self.voice.stop();self.current_audio=None;self.deadline=None;self.audio_busy=False
+  self.voice.stop();self.current_audio=None;self.deadline=None;self.audio_busy=False;self.voice_wait_since=None
   if clear_visual:self.cue_text='';self.cue_until=0;self.spoken.hide()
  @property
  def speech_priority(self):
   # Reserve the shared sound channel before the next UI timer starts a cue.
-  return bool(self.enabled and not self.muted and self.safe and time.monotonic()-self.last_frame<1.25 and self.progress and (self.progress.current or self.progress.pending))
+  if not (self.enabled and not self.muted and not self.voice_failed and self.safe and time.monotonic()-self.last_frame<1.25 and self.progress and self.cache):return False
+  step=self.progress.current or (self.progress.pending[0] if self.progress.pending else None)
+  return bool(step and (self.cache/f'{self.order.steps.index(step)}.wav').is_file())
  def observe(self,game,result,stamp):
   session=game[1] if game else None
   match_id=result.get('match_id') if result else None
@@ -166,16 +182,24 @@ class BuildOrders:
     self.progress.complete();self.pause_audio(clear_visual=False)
    step=self.progress.begin()
    if step and self.deadline is None:
-    index=self.order.steps.index(step);clip=self.cache/f'{index}.wav'
+    index=self.order.steps.index(step);clip=self.cache/f'{index}.wav' if self.cache else None
     if self.muted:self.deadline=now+(10 if '.' in step.id else 3)
-    elif clip.exists() and (not self.process or self.process.poll() is not None):
+    elif self.voice_failed:self.visual_fallback(step,now)
+    elif clip and clip.is_file():
      try:
-      with wave.open(str(clip),'rb') as f:duration=f.getnframes()/f.getframerate()
-      self.tc.voice.stop();self.audio_busy=True;self.voice.path=str(clip);self.voice.update(True,now,event=(self.prefs.get('selected'),step.id));self.deadline=now+max(duration+.08,10 if '.' in step.id else 0)
+      with wave.open(str(clip),'rb') as f:
+       duration=f.getnframes()/f.getframerate()
+       if duration<=0:raise ValueError('Empty voice clip')
+      self.tc.voice.stop();self.voice.path=str(clip)
+      if self.voice.update(True,now,event=(self.prefs.get('selected'),step.id)) is False:raise RuntimeError('Playback failed')
+      self.audio_busy=True;self.voice_wait_since=None;self.deadline=now+max(duration+.08,10 if '.' in step.id else 0)
       self.cue_text=step.text;self.cue_until=now+duration+3
-     except (OSError,wave.Error):self.status='Voice unavailable — use Mute for visual-only steps'
-    elif self.process and self.process.poll() is None:self.status='Preparing voice…'
-    else:self.status='Voice unavailable — use Mute for visual-only steps'
+     except (OSError,wave.Error,EOFError,ValueError,RuntimeError,ZeroDivisionError):self.visual_fallback(step,now)
+    elif self.process and self.process.poll() is None:
+     if self.voice_wait_since is None:self.voice_wait_since=now
+     if now-self.voice_wait_since>=10:self.visual_fallback(step,now)
+     else:self.status='Preparing voice…'
+    else:self.visual_fallback(step,now)
   self.panel.show_progress(self.progress,safe)
   step=self.progress.current
   speaking=bool(safe and not self.muted and self.audio_busy and step and self.voice.finishes is not None and now<self.voice.finishes)
@@ -183,9 +207,10 @@ class BuildOrders:
   else:self.spoken.hide()
   extra=self.status if step and self.deadline is None and safe else ('Playing instruction' if speaking else 'Follow this instruction' if step else 'Waiting for villager '+str(self.progress.next_step().villagers) if self.progress.next_step() else 'Build order complete')
   if not safe:extra='Paused — waiting for running gameplay.'
+  if safe and self.voice_failed:extra='Visual instructions — reselect the order to retry voice'
   self.panel.next.setText(extra);self.panel.adjustSize()
  def close(self):
   self.timer.stop();self.pause_audio();self.panel.close();self.spoken.close()
   if getattr(self,'selector',None) is not None:self.selector.close()
-  if self.process and self.process.poll() is None:self.process.kill()
+  self.stop_generation()
 

@@ -38,7 +38,7 @@ class PackagingTests(unittest.TestCase):
         def included(path):
             return any((path == source or path.startswith(source.rstrip('/') + '/')
                         or fnmatch.fnmatchcase(path, source))
-                       and str(Path(destination) / Path(path).name) == path
+                       and (Path(destination) / Path(path).name).as_posix() == path
                        for source, destination in resources)
 
         clock = json.loads((ROOT / 'tc_reminder/clock-calibration.json').read_text())

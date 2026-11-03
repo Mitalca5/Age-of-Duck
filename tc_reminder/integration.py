@@ -50,7 +50,7 @@ class TCController(QObject):
         from hud_regions import HudRegions
         self.regions=HudRegions(self.settings_path.parent/'hud_regions.json');self.detector.regions=self.regions
         try:self.manual_tcs=max(0,min(20,int(self.prefs.get('manual_tcs',0))))
-        except (TypeError,ValueError):self.manual_tcs=0
+        except (TypeError,ValueError,OverflowError):self.manual_tcs=0
         self.selection=SelectionEvidence();self.continuity=MatchContinuity();self.match_session=None;self.match_generation=0;self.housing=StableHousingReminder()
         self.voice=RepeatingVoice(ROOT/'idle.wav');self.voice_active=False
         self.build_events=BuildHouseEvents();self.voice_event=None

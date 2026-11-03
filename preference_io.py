@@ -13,6 +13,10 @@ def valid_size(value):
     return (isinstance(value,(list,tuple)) and len(value)==2
             and all(isinstance(v,int) and not isinstance(v,bool) and v>0 for v in value))
 
+def valid_position(value):
+    return (isinstance(value,(list,tuple)) and len(value)==2
+            and all(type(v) is int and -(2**31)<v<2**31 for v in value))
+
 def voice_volume(value,default=100):
     try:return max(0,min(100,int(value)))
     except (TypeError,ValueError,OverflowError):return default

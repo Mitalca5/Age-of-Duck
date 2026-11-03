@@ -36,6 +36,7 @@ if sys.platform == "win32":
 
 from tooltip import CivMatchupPanel
 from screen_placement import visible_position
+from game_process import is_game_process
 from update_io import startup_command, consume_completed_update
 
 
@@ -53,8 +54,8 @@ DEFAULT_FONT_SIZE = 9
 
 
 GITHUB_API_LATEST_RELEASE = (
-    "https://api.github.com/repos/BubbleDuckz/"
-    "AgeofDuck-ELO-Overlay-for-Age-of-Empires-2-DE/releases/latest"
+    "https://api.github.com/repos/Mitalca5/"
+    "Age-of-Duck/releases/latest"
 )
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -66,7 +67,7 @@ os.makedirs(APP_DATA_DIR, exist_ok=True)
 
 PROFILE_FILE = os.path.join(APP_DATA_DIR, "profile_id.txt")
 POSITION_FILE = os.path.join(APP_DATA_DIR, "overlay_position.txt")
-UPDATE_FLAG_PATH = os.path.join(tempfile.gettempdir(), "AgeOfDuck_updated.flag")
+UPDATE_FLAG_PATH = os.path.join(APP_DATA_DIR, "fork_update.json")
 STRATEGIES_FILE = os.path.join(APP_DATA_DIR, "typical_strategies.json")
 CIV_DATA_FILE = os.path.join(APP_DATA_DIR, "civ_data.json")
 UNITS_DB_FILE = os.path.join(APP_DATA_DIR, "units_db.json")
@@ -240,8 +241,8 @@ class ProcessChecker(QObject):
         while self.running:
             aoe_running = False
             try:
-                for proc in psutil.process_iter(["name"]):
-                    if (proc.info.get("name") or "").lower() == "aoe2de_s.exe":
+                for proc in psutil.process_iter(["name"], ad_value=""):
+                    if is_game_process(proc.info.get("name")):
                         aoe_running = True
                         break
             except Exception:
@@ -826,6 +827,7 @@ class PlayerRow(QFrame):
         is_ai = bool(player.get("is_ai"))
         name = "AI" if is_ai else (player.get("name") or "Unknown")
         self.bot_icon.setVisible(is_ai)
+        self.name_label.setTextFormat(Qt.PlainText)
         self.name_label.setText(name)
         self.name_label.setToolTip("Computer player" if is_ai else name)
         self.name_label.setStyleSheet(f"color:{color}; font-weight:700;")
@@ -1418,6 +1420,8 @@ def main():
 
     settings = SettingsWindow()
     overlay = Overlay(tray_icon)
+    app.aboutToQuit.connect(overlay.worker.stop)
+    app.aboutToQuit.connect(overlay.process_checker.stop)
 
     def open_settings():
         # Let the tray menu release its focus grab before activating the editor.

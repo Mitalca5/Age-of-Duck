@@ -4,6 +4,7 @@ from PyQt5.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPain
 from PyQt5.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from screen_placement import visible_position
+from preference_io import valid_position
 from tc_reminder import native
 from ui_bits import ElidedLabel, SizeButton
 
@@ -251,7 +252,7 @@ class BuildPanel(QWidget):
         if self.drag is not None:
             return
         pos = self.owner.prefs.get("position")
-        if isinstance(pos, list) and len(pos) == 2:
+        if valid_position(pos):
             self.move(*map(int, pos))
         else:
             area = QApplication.primaryScreen().availableGeometry()

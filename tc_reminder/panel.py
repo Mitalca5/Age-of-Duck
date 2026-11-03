@@ -186,7 +186,8 @@ class TCPanel(QWidget):
         w = round(self.width() * ratio)
         h = round(self.height() * ratio)
         l, t, r, b = self.game[2]
-        dx, dy = self.offset if self.offset is not None else ((r - l - w) // 2, 70)
+        from preference_io import valid_position
+        dx, dy = self.offset if valid_position(self.offset) else ((r - l - w) // 2, 70)
         dx = max(0, min(dx, r - l - w))
         dy = max(0, min(dy, b - t - h))
         native.show_overlay(self.hwnd, l + int(dx), t + int(dy), w, h)

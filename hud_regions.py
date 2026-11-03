@@ -134,6 +134,7 @@ class HudRegions:
             return
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
+            if not isinstance(data,dict):return
             boxes = {k: tuple(float(v) for v in data['boxes'][k]) for k in ORDER}
             if all(len(b) == 4 and 0 <= b[0] < b[2] <= 1 and 0 <= b[1] < b[3] <= 1 for b in boxes.values()):
                 size=data.get('size')
@@ -167,7 +168,7 @@ class HudRegions:
 
     def usable(self, size):
         """Boxes apply while the game window has the aspect ratio they were drawn on."""
-        if not self.boxes:
+        if not self.boxes or not valid_size(size):
             return False
         if not self.size:
             return True
@@ -197,7 +198,9 @@ class HudRegions:
                 info['pop_flash_fraction'] = flash_fraction(crop)
             if key == 'queue':
                 scale = QUEUE_TILE / max(1, crop.height)
-                resized = crop.resize((max(1, round(crop.width * scale)), QUEUE_TILE), Image.Resampling.BICUBIC)
+                # Ignore pixels beyond the canonical queue before scaling a very wide, thin box.
+                crop = crop.crop((0, 0, min(crop.width, max(1, round(CANVAS[0] / scale))), crop.height))
+                resized = crop.resize((min(CANVAS[0], max(1, round(crop.width * scale))), QUEUE_TILE), Image.Resampling.BICUBIC)
                 canvas.paste(resized.crop((0, 0, min(resized.width, CANVAS[0]), QUEUE_TILE)), (0, 58))
                 continue
             self._paste_text(canvas, crop, spec)
