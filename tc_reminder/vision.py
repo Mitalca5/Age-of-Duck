@@ -226,7 +226,7 @@ class Detector:
         # right are terrain or noise.
         pitch = int(round(p['queue_pitch']))
         tile_count = int((queue[2]-queue[0])/p['queue_pitch'])
-        def has_frame(x, y):
+        def has_frame(x, y, check_tint=False):
             colour = rgb[max(0,y-1):y+p['queue_height']+1, x:x+pitch].astype(float)
             if colour.shape[0] < 8 or colour.shape[1] < pitch:
                 return False
@@ -238,7 +238,15 @@ class Detector:
             # Progress shading hides the frame on some tiles; the white hotkey letter in the
             # bottom-right corner (Q, A, Z ...) is on every queue tile.
             corner = rgb[y+18:y+p['queue_height'], x+14:x+pitch].astype(float)
-            return corner.size > 0 and np.count_nonzero(corner.min(2) > 215) >= 14
+            if corner.size > 0 and np.count_nonzero(corner.min(2) > 215) >= 14:
+                return True
+            # Some skins tint the border/hotkey along with progress. Coloured
+            # edges alone are not a frame: also require the blue-skin portrait.
+            light = (colour.max(2)>80)&(colour.min(2)>35)
+            if check_tint and np.count_nonzero(light[:4])>pitch*.6 and np.count_nonzero(light[-4:])>pitch*.6:
+                tile = rgb[max(0,y):y+p['queue_height'],max(0,x):x+pitch]
+                return self.villager_portraits.match(tile,max(.94,threshold)) is not None
+            return False
         framed = {}
         for index in range(tile_count):
             if index in slots:
@@ -247,7 +255,7 @@ class Detector:
             # Another skin or a rescaled box can sit a few pixels off the calibrated grid.
             for dy in (0, -1, 1, -2, 2, -3, 3):
                 for dx in (0, -1, 1, -2, 2, -3, 3):
-                    if has_frame(x0+dx, queue[1]+dy):
+                    if has_frame(x0+dx, queue[1]+dy, check_tint=dx==0 and dy==0):
                         framed[index] = (x0+dx, queue[1]+dy)
                         break
                 if index in framed:
