@@ -242,10 +242,11 @@ class Detector:
                 return True
             # Some skins tint the border/hotkey along with progress. Coloured
             # edges alone are not a frame: also require the blue-skin portrait.
-            light = (colour.max(2)>80)&(colour.min(2)>35)
-            if check_tint and np.count_nonzero(light[:4])>pitch*.6 and np.count_nonzero(light[-4:])>pitch*.6:
-                tile = rgb[max(0,y):y+p['queue_height'],max(0,x):x+pitch]
-                return self.villager_portraits.match(tile,max(.94,threshold)) is not None
+            if check_tint:
+                light = (colour.max(2)>80)&(colour.min(2)>35)
+                if np.count_nonzero(light[:4])>pitch*.6 and np.count_nonzero(light[-4:])>pitch*.6:
+                    tile = rgb[max(0,y):y+p['queue_height'],max(0,x):x+pitch]
+                    return self.villager_portraits.match(tile,max(.94,threshold)) is not None
             return False
         framed = {}
         for index in range(tile_count):
