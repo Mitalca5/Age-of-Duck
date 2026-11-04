@@ -2,7 +2,7 @@
 import json,time
 from PyQt5.QtCore import Qt,QTimer,QEasingCurve,QVariantAnimation,QPointF,QRectF
 from PyQt5.QtGui import QFont,QPainter,QPen,QColor,QPolygonF,QLinearGradient,QBrush
-from PyQt5.QtWidgets import QWidget,QHBoxLayout,QVBoxLayout,QPushButton,QLabel,QFrame,QSlider
+from PyQt5.QtWidgets import QApplication,QWidget,QHBoxLayout,QVBoxLayout,QPushButton,QLabel,QFrame,QSlider
 from tc_reminder.voice import RepeatingVoice
 from tc_reminder import native
 from ui_bits import StatusLightButton,SpeakerButton
@@ -84,10 +84,11 @@ class CompanionControls(QWidget):
   audio.addWidget(self.speaker);audio.addWidget(self.slider,1);audio.addWidget(self.level)
   self.level.setFixedWidth(44)
   self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(250);self.save_timer.timeout.connect(self.save_volume)
+  QApplication.instance().aboutToQuit.connect(self.flush_volume)
   self.slider.valueChanged.connect(self.set_volume);self.tc.mute.toggled.connect(self.refresh_labels)
   for b in self.findChildren(QPushButton):b.setFocusPolicy(Qt.NoFocus);b.setCursor(Qt.PointingHandCursor)
   main.scale_changed.connect(self.set_scale);self.set_scale(main.scale_factor);self.refresh()
-  self.availability_timer=QTimer(self);self.availability_timer.timeout.connect(self.refresh);self.availability_timer.start(150)
+  self.availability_timer=QTimer(self);self.availability_timer.timeout.connect(self.refresh_if_visible);self.availability_timer.start(150)
   tc.enabled.toggled.connect(self.refresh)
   if build.enabled_checkbox:build.enabled_checkbox.toggled.connect(self.refresh)
   # Automatic display stays passive; an explicit window click may activate it.
@@ -130,6 +131,8 @@ class CompanionControls(QWidget):
    button.setCursor(Qt.PointingHandCursor if available else Qt.ArrowCursor)
    button.setToolTip(('Green = showing. Click to '+('hide' if shown else 'show')+' the '+name+'. Audio keeps playing.') if available else 'The '+name+' is unavailable outside a detected game or while its feature is disabled.')
   self.refresh_labels()
+ def refresh_if_visible(self):
+  if self.main.isVisible() or self.volume_row.isVisible():self.refresh()
  def refresh_labels(self,*args):
   self.guide.set_light(self.build.enabled and self.build.view_visible)
   self.idle.set_light(self.tc.enabled.isChecked() and self.tc.view_visible)
@@ -151,5 +154,8 @@ class CompanionControls(QWidget):
  def save_volume(self):
   try:self.tc.settings_path.write_text(json.dumps(self.tc.prefs))
   except OSError:pass
+ def flush_volume(self):
+  if self.save_timer.isActive():
+   self.save_timer.stop();self.save_volume()
  def toggle_mute(self):self.tc.mute.toggle()
 

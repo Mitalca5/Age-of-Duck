@@ -28,7 +28,8 @@ class TCController(QObject):
         from villager_reader import VillagerReader
         self.villager_reader=VillagerReader()
         self.settings_path=Path(settings_path)
-        self.diagnostics=Path(sys.executable).parent/'tc-live-status.json' if getattr(sys,'frozen',False) else ROOT/'tc-live-status.json'
+        self.diagnostics=self.settings_path.parent/'tc-live-status.json'
+        self._last_diagnostic_text=None
         self.last_diagnostic=0
         self.latest_state={}
         self.error=''
@@ -107,7 +108,8 @@ class TCController(QObject):
         self.panel_scale_changed.emit(self.panel_scale)
     def set_view_visible(self,value,game=None):
         self.view_visible=bool(value);self.prefs['view_visible']=self.view_visible
-        self.settings_path.write_text(json.dumps(self.prefs))
+        try:self.settings_path.write_text(json.dumps(self.prefs))
+        except OSError:logging.exception('Cannot save TC visibility')
         self.sync_view(game or native.foreground_game(),self.enabled.isChecked() and self.owns_capture)
     def sync_view(self,game,enabled):
         """Keep this panel independent of capture latency and the guide window."""
@@ -231,8 +233,12 @@ class TCController(QObject):
             self.voice.update(bool(enabled and game and self.voice_active and not self.mute.isChecked()
                                    and self.detector.alerts_validated and now-self.last_good<=1.25),now,event=event)
         if now-self.last_diagnostic>=1:
-            try:self.diagnostics.write_text(json.dumps(dict(self.latest_state,foreground=bool(game),tc_view_requested=self.view_visible,tc_panel_visible=self.panel.isVisible(),build_view_requested=self.build_orders.view_visible if self.build_orders else None,enabled=enabled,owns_capture=self.owns_capture,mute=self.mute.isChecked(),validated=self.detector.alerts_validated,voice_active=self.voice_active,clip=self.voice.path,build_order_step=self.build_orders.progress.current.id if self.build_orders and self.build_orders.progress and self.build_orders.progress.current else None,build_order_pending=[s.id for s in self.build_orders.progress.pending] if self.build_orders and self.build_orders.progress else [],error=self.error),indent=2))
-            except OSError:pass
+            text=json.dumps(dict(self.latest_state,foreground=bool(game),tc_view_requested=self.view_visible,tc_panel_visible=self.panel.isVisible(),build_view_requested=self.build_orders.view_visible if self.build_orders else None,enabled=enabled,owns_capture=self.owns_capture,mute=self.mute.isChecked(),validated=self.detector.alerts_validated,voice_active=self.voice_active,clip=self.voice.path,build_order_step=self.build_orders.progress.current.id if self.build_orders and self.build_orders.progress and self.build_orders.progress.current else None,build_order_pending=[s.id for s in self.build_orders.progress.pending] if self.build_orders and self.build_orders.progress else [],error=self.error),indent=2)
+            if text!=self._last_diagnostic_text:
+                try:
+                    self.diagnostics.write_text(text,encoding="utf-8")
+                    self._last_diagnostic_text=text
+                except OSError:pass
             self.last_diagnostic=now
         if capture_enabled and game and self.future is None and now-self.last_frame>=.5:
             self.last_frame=now;self.future=self.executor.submit(self.capture_frame,game,self.epoch)

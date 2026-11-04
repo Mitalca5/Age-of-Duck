@@ -193,6 +193,8 @@ class TCPanel(QWidget):
         native.show_overlay(self.hwnd, l + int(dx), t + int(dy), w, h)
 
     def update_input(self):
+        if not self.isVisible():
+            return
         pos = self.mapFromGlobal(QCursor.pos())
         interactive = self.drag_origin is not None
         for widget in (self.drag_bar, self.mute_button, self.minus, self.plus):

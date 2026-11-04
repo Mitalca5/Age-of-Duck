@@ -1,5 +1,5 @@
 """Optional build-order overlay and local Windows speech, driven by shared captures."""
-import hashlib,json,os,shutil,subprocess,time,wave
+import hashlib,json,logging,os,shutil,subprocess,time,wave
 from pathlib import Path
 from PyQt5.QtCore import Qt,QTimer,QPoint,pyqtSignal
 from PyQt5.QtGui import QCursor,QFont,QColor,QPainter,QPen,QLinearGradient
@@ -64,7 +64,9 @@ class BuildOrders:
   elif direction>0:self.main.increase_scale()
   else:self.main.decrease_scale()
  def save(self):
-  self.prefs.update(enabled=self.enabled,muted=self.muted);self.pref_file.write_text(json.dumps(self.prefs,indent=2))
+  self.prefs.update(enabled=self.enabled,muted=self.muted)
+  try:self.pref_file.write_text(json.dumps(self.prefs,indent=2))
+  except OSError:logging.exception('Cannot save build-order preferences')
  def set_enabled(self,value):
   self.enabled=bool(value);self.tc.observer_enabled=self.enabled;self.save()
   if not self.enabled:self.pause_audio();self.panel.hide()
@@ -207,7 +209,8 @@ class BuildOrders:
   extra=self.status if step and self.deadline is None and safe else ('Playing instruction' if speaking else 'Follow this instruction' if step else 'Waiting for villager '+str(self.progress.next_step().villagers) if self.progress.next_step() else 'Build order complete')
   if not safe:extra='Paused — waiting for running gameplay.'
   if safe and self.voice_failed and step:extra='Visual instructions — reselect the order to retry voice'
-  self.panel.next.setText(extra);self.panel.adjustSize()
+  if self.panel.next.text()!=extra:
+   self.panel.next.setText(extra);self.panel.adjustSize()
  def close(self):
   self.timer.stop();self.pause_audio();self.panel.close();self.spoken.close()
   if getattr(self,'selector',None) is not None:self.selector.close()

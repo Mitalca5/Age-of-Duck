@@ -156,7 +156,7 @@ def capture(game):
     # context but freezes capture; unrelated apps suspend both panels.
     if not game or companion_focused() or foreground_game()!=game:return None
     im=ImageGrab.grab(bbox=game[2],all_screens=True)
-    return im if foreground_game()==game else None
+    return im if not companion_focused() and foreground_game()==game else None
 
 
 def prepare_overlay(widget):

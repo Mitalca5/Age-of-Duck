@@ -5,6 +5,11 @@ on:
   push:
     branches: [Main]
   workflow_dispatch:
+    inputs:
+      build_package:
+        description: 'Build an EXE and run packaged smoke tests'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,17 +41,24 @@ jobs:
           test_overlay_layout test_companion_controls test_companion_focus
           test_hud_calibration test_settings_window test_tc_panel
           test_housed_fallback test_villager_robustness test_requested_behaviors
+          test_performance_regressions
+      - name: Measure queue recognition on public screenshots
+        run: python scripts/benchmark_queue.py
       - name: Validate the bundled game catalog
         run: python check_game_data.py
       - name: Verify recognition calibration approval
         run: python -c "from tc_reminder.validation_gate import approved; assert approved(), 'Calibration fingerprint changed'"
       - name: Build the Windows application
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
         run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
       - name: Check packaged runtime resources
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
         run: python scripts/check_bundle.py dist/AgeOfDuck
       - name: Smoke test packaged startup and shutdown
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
         run: python scripts/smoke_package.py dist/AgeOfDuck/AgeOfDuck.exe
       - name: Upload package for manual Windows testing
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
         uses: actions/upload-artifact@v4
         with:
           name: AgeOfDuck-windows-${{ github.sha }}

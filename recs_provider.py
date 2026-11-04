@@ -47,6 +47,9 @@ def profile_updates(message):
         yield message.get('data')
 
 PEAK_MODES={3:'1v1',4:'Teams',13:'EW 1v1',14:'EW Teams'}
+PEAK_CACHE_SECONDS=300
+PEAK_CACHE_LIMIT=256
+PEAK_TASK_LIMIT=8
 
 def highest_peak(data):
     candidates=[]
@@ -141,7 +144,9 @@ class RecsWorker(QObject):
     def _disconnect(self):
         ws=self.socket
         if ws is not None:
-            try:ws.close()
+            # Abort the transport immediately: close() waits for a peer handshake
+            # and this method is also called by the GUI thread.
+            try:ws.shutdown()
             except Exception:pass
         self.wake.set()
     def set_game_running_state(self,running):
@@ -161,6 +166,8 @@ class RecsWorker(QObject):
         self.running=False;self._disconnect();self.peak_pool.shutdown(wait=False,cancel_futures=True)
     def clear(self):
         self.last_payload=None;self.current_data=None
+        for key,future in list(self.peak_tasks.items()):
+            if future.cancel():del self.peak_tasks[key]
         if self.live:self.in_game_signal.emit(False)
         self.live=False
         if not self._cleared:self.not_in_game.emit()
@@ -168,13 +175,13 @@ class RecsWorker(QObject):
     def accept(self,data,pid,generation):
         with self._state_lock:self._accept(data,pid,generation)
     def _accept(self,data,pid,generation):
-        if generation!=self.generation or pid!=self.profile_id:return
+        if not self.running or generation!=self.generation or pid!=self.profile_id:return
         result=normalize_profile(data,pid)
         if result is None:self.clear();return
         self.current_data=data
         for player in result[1]:
             cached=self.peak_cache.get((str(player['profile_id']),result[0]['leaderboardId']))
-            if not player['is_self'] and cached and time.monotonic()-cached[0]<300:
+            if not player['is_self'] and cached and time.monotonic()-cached[0]<PEAK_CACHE_SECONDS:
                 player['peak'],player['peak_mode']=cached[1]
         signature=json.dumps(result,sort_keys=True)
         if signature!=self.last_payload:
@@ -183,6 +190,18 @@ class RecsWorker(QObject):
         self.live=True;self._cleared=False
     def enrich_peaks(self,pid,generation):
         if not self.running or generation!=self.generation or pid!=self.profile_id:return
+        now=time.monotonic()
+        for key,(stamp,_) in list(self.peak_cache.items()):
+            if now-stamp>=PEAK_CACHE_SECONDS:del self.peak_cache[key]
+        live=(self.current_data or {}).get('live') or {}
+        mode=live.get('leaderboard')
+        leaderboard=LEADERBOARDS.get(mode) if isinstance(mode,str) else None
+        players=live.get('players') or []
+        wanted={(str(p.get('id')),leaderboard) for p in players
+                if isinstance(p,dict) and str(p.get('id')).isdigit()
+                and str(p.get('id'))!=pid and not p.get('ai') and leaderboard is not None}
+        for key,future in list(self.peak_tasks.items()):
+            if key not in wanted and future.cancel():del self.peak_tasks[key]
         changed=False
         for key,future in list(self.peak_tasks.items()):
             if future.done():
@@ -190,6 +209,9 @@ class RecsWorker(QObject):
                 try:value=future.result()
                 except Exception:value=(None,None)
                 self.peak_cache[key]=(time.monotonic(),value);changed=True
+        while len(self.peak_cache)>PEAK_CACHE_LIMIT:
+            oldest=min(self.peak_cache,key=lambda key:self.peak_cache[key][0])
+            del self.peak_cache[oldest]
         if changed and self.current_data:self.accept(self.current_data,pid,generation)
         if not self.current_data:return
         mode=(self.current_data.get('live') or {}).get('leaderboard')
@@ -199,9 +221,10 @@ class RecsWorker(QObject):
             if not isinstance(player,dict):continue
             player_id=str(player.get('id'))
             key=(player_id,leaderboard)
-            if not player_id.isdigit() or player_id==pid or key in self.peak_tasks:continue
+            if key not in wanted or key in self.peak_tasks:continue
             cached=self.peak_cache.get(key)
-            if cached and time.monotonic()-cached[0]<300:continue
+            if cached and time.monotonic()-cached[0]<PEAK_CACHE_SECONDS:continue
+            if len(self.peak_tasks)>=PEAK_TASK_LIMIT:break
             self.peak_tasks[key]=self.peak_pool.submit(fetch_peak,player_id,leaderboard)
 
     def poll_loop(self):

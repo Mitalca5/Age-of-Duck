@@ -54,14 +54,17 @@ class Detector:
             delta=size[0]-self.profile['size'][0];r[0]+=delta;r[2]+=delta
         return r
 
-    def matches(self, image, category, region, threshold):
+    def matches(self, image, category, region, threshold, prepared=None):
         x0, y0, x1, y1 = region
-        hay = gray(image.crop(region))
+        hay = gray(image.crop(region)) if prepared is None else prepared[0]
+        binary = None if prepared is None else prepared[1]
         hits = []
         for meta, template in self.templates:
             if meta['kind'] != category or template.shape[0] > hay.shape[0] or template.shape[1] > hay.shape[1]:
                 continue
-            search = (hay>210).astype(np.uint8)*255 if meta.get('binary') else hay
+            if meta.get('binary') and binary is None:
+                binary = (hay>210).astype(np.uint8)*255
+            search = binary if meta.get('binary') else hay
             result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
             # Bound candidate work even on pathological input.
             for _ in range(64):
@@ -84,6 +87,7 @@ class Detector:
         if self.regions is not None and self.regions.usable(image.size):return self.regions.build_canvas(image)
         target=tuple(self.profile['size'])
         if all(abs(a-b)<=4 for a,b in zip(image.size,target)):return image
+        if image.height==target[1]:return image
         # UI size follows height; preserve aspect ratio and anchor each region.
         if image.width>=640 and image.height>=480:
             return image.resize((round(image.width*target[1]/image.height),target[1]),Image.Resampling.BICUBIC)
@@ -171,8 +175,10 @@ class Detector:
         # These small regions are explicitly marked on actual screenshots.
         queue = self.rect('queue', image.size)
         queue[2]=min(queue[2],image.width)
+        hay = gray(image.crop(queue))
+        prepared = (hay, (hay>210).astype(np.uint8)*255)
         for kind in ('villager', 'research', 'research_waiting', 'housed', 'non_tc'):
-            result['hits'] += self.matches(image, kind, queue, max(.95,threshold) if kind=='non_tc' else threshold)
+            result['hits'] += self.matches(image, kind, queue, max(.95,threshold) if kind=='non_tc' else threshold, prepared)
         # Consolidate variant templates into ONE entry per queue slot.
         slots = {}
         for hit in result['hits']:
@@ -180,7 +186,10 @@ class Detector:
             slot = int((centre - queue[0])/p['queue_pitch'])
             if slot not in slots or slots[slot]['score'] < hit['score']:
                 slots[slot] = hit
-        rgb = np.asarray(image.convert('RGB'))
+        # Keep absolute indices, including the +/-3 frame search and bottom border.
+        # Only this top-left strip is read; copying a full 1440p/4K frame is wasteful.
+        rgb = np.asarray(image.crop((0, 0, min(image.width, queue[2]+4),
+                                    min(image.height, queue[1]+p['queue_height']+4))).convert('RGB'))
         for index, hit in slots.items():
             x = round(queue[0]+index*p['queue_pitch'])
             patch = rgb[queue[1]+2:queue[1]+35,x+2:x+35].astype(float)
