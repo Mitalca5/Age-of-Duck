@@ -20,8 +20,8 @@ Click-for-counter, build-order coaching, Town Centre / housing alerts and live l
 - **Build orders (beta).** Load a build order and the overlay follows your villager count, highlights the current step and reads it out loud. Create and share them at [ageofduck.com/build-orders](https://ageofduck.com/build-orders/).
 - **Idle TC / Housed alerts (beta).** Counts your Town Centres and warns you, with a voice, when one is idle, when you're close to the cap, and when you're housed.
 - **HUD set-up (beta).** Draw the population, villager, clock and queue areas yourself for any HUD skin, resolution or UI size.
-- **Lobby info.** Civ, ELO and peak rating across ladders, colour-coded teams, AI players labelled, and badges for all 56 civilisations.
-- **Non-intrusive.** Translucent, draggable and resizable, and it never takes focus from the game.
+- **Lobby info.** Civ, current ELO and peak rating for the current match's ladder, colour-coded teams, AI players labelled, and badges for all 56 civilisations.
+- **Non-intrusive.** Translucent, draggable and resizable, and automatic updates do not steal focus. Click the main overlay to focus it; Alt+F4 hides it to the tray while the app keeps running. Use **Show overlay** in the tray menu or double-click its icon to restore it.
 
 More screenshots are on the [website](https://ageofduck.com).
 

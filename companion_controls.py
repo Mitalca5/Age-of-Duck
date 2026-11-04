@@ -90,7 +90,7 @@ class CompanionControls(QWidget):
   self.availability_timer=QTimer(self);self.availability_timer.timeout.connect(self.refresh);self.availability_timer.start(150)
   tc.enabled.toggled.connect(self.refresh)
   if build.enabled_checkbox:build.enabled_checkbox.toggled.connect(self.refresh)
-  # Controls must not take keyboard focus away from the game.
+  # Automatic display stays passive; an explicit window click may activate it.
   main.setAttribute(Qt.WA_ShowWithoutActivating)
   for button in main.findChildren(QPushButton):button.setFocusPolicy(Qt.NoFocus)
  def _update_toggle_text(self):

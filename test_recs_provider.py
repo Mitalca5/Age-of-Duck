@@ -63,17 +63,17 @@ class ProviderTests(unittest.TestCase):
     d=copy.deepcopy(self.packet['data']);d['live'][field]=value
     self.assertIsNone(normalize_profile(d,'1001'))
 class PeakTests(unittest.TestCase):
- def test_highest_across_modes_not_current_match(self):
+ def test_peak_matches_current_match_mode(self):
   from recs_provider import highest_peak
   d=json.loads((FIX/'recs-live-synthetic.json').read_text())['data'];d['live']['leaderboard']='RM TG';d['live']['players'][0]['rating']=1300
   player=normalize_profile(d,'1001')[1][0]
-  self.assertEqual((player['rating'],player['peak'],player['peak_mode']),(1300,1600,'1v1'))
+  self.assertEqual((player['rating'],player['peak'],player['peak_mode']),(1300,1500,'Teams'))
   for ident,label in [(3,'1v1'),(4,'Teams'),(13,'EW 1v1'),(14,'EW Teams')]:
    self.assertEqual(highest_peak({'ladders':[{'id':ident,'highest':2200},{'id':29,'highest':9999}]}),(2200,label))
  def test_missing_peaks_and_cached_other_player(self):
   from recs_provider import highest_peak
   self.assertEqual(highest_peak({'ladders':[]}),(None,None))
-  w=RecsWorker();self.addCleanup(w.stop);w.profile_id='1001';w.peak_cache['1002']=(__import__('time').monotonic(),(2800,'EW Teams'));seen=[]
+  w=RecsWorker();self.addCleanup(w.stop);w.profile_id='1001';w.peak_cache[('1002',3)]=(__import__('time').monotonic(),(2800,'1v1'));seen=[]
   w.data_updated.connect(lambda *x:seen.append(x));w.accept(json.loads((FIX/'recs-live-synthetic.json').read_text())['data'],'1001',0)
-  self.assertEqual((seen[0][1][1]['peak'],seen[0][1][1]['peak_mode']),(2800,'EW Teams'));w.stop()
+  self.assertEqual((seen[0][1][1]['peak'],seen[0][1][1]['peak_mode']),(2800,'1v1'));w.stop()
 

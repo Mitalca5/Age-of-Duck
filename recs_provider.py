@@ -59,7 +59,18 @@ def highest_peak(data):
             candidates.append((int(value),mode))
     return max(candidates,key=lambda item:item[0]) if candidates else (None,None)
 
-def fetch_peak(profile_id):
+def peak_for_mode(data,leaderboard_id):
+    """Never substitute a peak from another ladder when this mode has no history."""
+    if leaderboard_id not in PEAK_MODES:return None,None
+    ladders=data.get('ladders') if isinstance(data,dict) else None
+    for ladder in ladders if isinstance(ladders,list) else []:
+        if not isinstance(ladder,dict) or type(ladder.get('id')) is not int or ladder['id']!=leaderboard_id:continue
+        value=ladder.get('highest')
+        if isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>0:
+            return int(value),PEAK_MODES[leaderboard_id]
+    return None,None
+
+def fetch_peak(profile_id,leaderboard_id):
     ws=websocket.create_connection(URL,origin='https://aoe2recs.com',timeout=8)
     try:
         ws.send(json.dumps({'profile_id':int(profile_id)}));ws.settimeout(1);deadline=time.monotonic()+12
@@ -69,7 +80,7 @@ def fetch_peak(profile_id):
             if not raw:break
             for data in profile_updates(json.loads(raw)):
                 owner=data.get('player') if isinstance(data,dict) else None
-                if isinstance(owner,dict) and str(owner.get('id'))==str(profile_id):return highest_peak(data)
+                if isinstance(owner,dict) and str(owner.get('id'))==str(profile_id):return peak_for_mode(data,leaderboard_id)
         raise TimeoutError('Peak profile unavailable')
     finally:ws.close()
 
@@ -92,7 +103,7 @@ def normalize_profile(data,profile_id):
     if not any(str(p.get('id')) in owned for p in rows):return None
     leaderboard_name=live.get('leaderboard')
     leaderboard=LEADERBOARDS.get(leaderboard_name) if isinstance(leaderboard_name,str) else None
-    peak,peak_mode=highest_peak(data)
+    peak,peak_mode=peak_for_mode(data,leaderboard)
     players=[]
     for p in rows:
         color=p.get('color_hex','')
@@ -162,7 +173,7 @@ class RecsWorker(QObject):
         if result is None:self.clear();return
         self.current_data=data
         for player in result[1]:
-            cached=self.peak_cache.get(str(player['profile_id']))
+            cached=self.peak_cache.get((str(player['profile_id']),result[0]['leaderboardId']))
             if not player['is_self'] and cached and time.monotonic()-cached[0]<300:
                 player['peak'],player['peak_mode']=cached[1]
         signature=json.dumps(result,sort_keys=True)
@@ -173,21 +184,25 @@ class RecsWorker(QObject):
     def enrich_peaks(self,pid,generation):
         if not self.running or generation!=self.generation or pid!=self.profile_id:return
         changed=False
-        for player_id,future in list(self.peak_tasks.items()):
+        for key,future in list(self.peak_tasks.items()):
             if future.done():
-                del self.peak_tasks[player_id]
+                del self.peak_tasks[key]
                 try:value=future.result()
                 except Exception:value=(None,None)
-                self.peak_cache[player_id]=(time.monotonic(),value);changed=True
+                self.peak_cache[key]=(time.monotonic(),value);changed=True
         if changed and self.current_data:self.accept(self.current_data,pid,generation)
         if not self.current_data:return
+        mode=(self.current_data.get('live') or {}).get('leaderboard')
+        leaderboard=LEADERBOARDS.get(mode) if isinstance(mode,str) else None
+        if leaderboard is None:return
         for player in (self.current_data.get('live') or {}).get('players',[]):
             if not isinstance(player,dict):continue
             player_id=str(player.get('id'))
-            if not player_id.isdigit() or player_id==pid or player_id in self.peak_tasks:continue
-            cached=self.peak_cache.get(player_id)
+            key=(player_id,leaderboard)
+            if not player_id.isdigit() or player_id==pid or key in self.peak_tasks:continue
+            cached=self.peak_cache.get(key)
             if cached and time.monotonic()-cached[0]<300:continue
-            self.peak_tasks[player_id]=self.peak_pool.submit(fetch_peak,player_id)
+            self.peak_tasks[key]=self.peak_pool.submit(fetch_peak,player_id,leaderboard)
 
     def poll_loop(self):
         delay=2

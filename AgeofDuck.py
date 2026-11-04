@@ -835,7 +835,7 @@ class PlayerRow(QFrame):
         self.rating_label.setText("" if player.get("rating") is None else str(player.get("rating")))
         peak=player.get('peak');mode=player.get('peak_mode')
         self.peak_label.setText('—' if peak is None else html.escape(str(peak))+(f'&nbsp;<b>({html.escape(mode).replace(chr(32), chr(160))})</b>' if mode else ''))
-        self.peak_label.setToolTip('Highest peak across 1v1, Teams, EW 1v1 and EW Teams')
+        self.peak_label.setToolTip('Highest ELO in the current match mode' + (f' ({mode})' if mode else '') + '. A dash means unavailable.')
         self.setToolTip(f"{player.get('name', 'Unknown')} \u00b7 {civ}\nClick for units and counters")
         self.show()
 
@@ -867,6 +867,7 @@ class Overlay(QWidget):
         self.current_players = []
         self.player_civ = None
         self.test_mode_active = False
+        self.dismissed_to_tray = False
         self._peak_expanded = load_peak_expanded()
         self.hide_own_team = load_hide_own_team()
         self._last_layout = ([], True, 0)
@@ -874,7 +875,7 @@ class Overlay(QWidget):
         self._peak_full_width = 40
 
         self.setWindowTitle("Age of Duck")
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         shadow = QGraphicsDropShadowEffect(self)
@@ -909,10 +910,10 @@ class Overlay(QWidget):
         self.process_thread.start()
 
     def nativeEvent(self,event_type,message):
-        # Accept clicks without asking Windows to activate the gameplay overlay.
+        # A deliberate click activates this window so Alt+F4 can hide it to the tray.
         from ctypes import wintypes
         msg=ctypes.cast(int(message),ctypes.POINTER(wintypes.MSG)).contents
-        if msg.message==0x0021:return True,3  # WM_MOUSEACTIVATE / MA_NOACTIVATE
+        if msg.message==0x0021:return True,1  # WM_MOUSEACTIVATE / MA_ACTIVATE
         return super().nativeEvent(event_type,message)
 
     def _build_ui(self):
@@ -1092,9 +1093,17 @@ class Overlay(QWidget):
             pass
 
     def closeEvent(self, event):
-        self.worker.stop()
-        self.process_checker.stop()
-        event.accept()
+        # Alt+F4 hides the window; only the tray's Quit action stops the application.
+        event.ignore()
+        self.dismissed_to_tray = True
+        self.hide()
+
+    def restore_from_tray(self):
+        self.dismissed_to_tray = False
+        self.show()
+        self.ensure_visible_position()
+        self.raise_()
+        self.activateWindow()
 
     def ensure_visible_position(self):
         if self.dragging:return
@@ -1224,7 +1233,7 @@ class Overlay(QWidget):
         self._aoe2_running = running
         self.game_running_changed.emit(running)
         if running:
-            self.show()
+            if not self.dismissed_to_tray:self.show()
             self.show_waiting()
         else:
             self.waiting_timer.stop()
@@ -1266,7 +1275,7 @@ class Overlay(QWidget):
 
         self._apply_own_team_visibility()
         self.sync_player_columns()
-        if self._aoe2_running:
+        if self._aoe2_running and not self.dismissed_to_tray:
             self.show()
         self.adjustSize()
 
@@ -1328,7 +1337,7 @@ class Overlay(QWidget):
             divider.set_collapse(None, False)
         self.matchup_panel.clear_selection()
         self.sync_player_columns()
-        if self._aoe2_running:
+        if self._aoe2_running and not self.dismissed_to_tray:
             self.show()
         self.adjustSize()
 
@@ -1448,6 +1457,8 @@ def main():
     def toggle_startup():
         set_app_startup(action_autostart.isChecked())
 
+    action_show = QAction("Show overlay", app)
+    action_show.triggered.connect(lambda: QTimer.singleShot(0, overlay.restore_from_tray))
     action_settings = QAction("Settings", app)
     action_find_id = QAction("Find my Profile ID", app)
     action_autostart = QAction("Start with Windows", app)
@@ -1472,6 +1483,7 @@ def main():
     action_quit.triggered.connect(app.quit)
 
     menu = QMenu()
+    menu.addAction(action_show)
     menu.addAction(action_settings)
     menu.addAction(action_find_id)
     menu.addSeparator()
@@ -1522,7 +1534,7 @@ def main():
 
     settings.profile_set.connect(apply_profile)
     tray_icon.activated.connect(
-        lambda reason: open_settings() if reason == QSystemTrayIcon.DoubleClick else None
+        lambda reason: QTimer.singleShot(0, overlay.restore_from_tray) if reason == QSystemTrayIcon.DoubleClick else None
     )
 
     initial_profile = load_last_profile_id()

@@ -3,7 +3,7 @@ name: Windows checks
 on:
   pull_request:
   push:
-    branches: [Main, 'fix/fork-stability']
+    branches: [Main]
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
           test_preference_io test_recs_provider test_fork_regressions
           test_overlay_layout test_companion_controls test_companion_focus
           test_hud_calibration test_settings_window test_tc_panel
-          test_housed_fallback test_villager_robustness
+          test_housed_fallback test_villager_robustness test_requested_behaviors
       - name: Validate the bundled game catalog
         run: python check_game_data.py
       - name: Verify recognition calibration approval
