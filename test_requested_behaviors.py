@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import Mock,patch
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QCloseEvent
-from test_overlay_layout import OverlayLayoutTests, PLAYERS, app
+import test_overlay_layout as layout_tests
+from test_overlay_layout import PLAYERS, app
 from recs_provider import RecsWorker, normalize_profile, peak_for_mode, fetch_peak
 from pathlib import Path
 
@@ -17,7 +18,7 @@ ROOT=Path(__file__).parent
 
 class TrayWorkflowTests(unittest.TestCase):
     def overlay(self):
-        return OverlayLayoutTests.make_overlay(self)
+        return layout_tests.OverlayLayoutTests.make_overlay(self)
 
     def test_click_allows_activation_for_alt_f4(self):
         overlay=self.overlay()

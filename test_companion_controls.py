@@ -92,7 +92,7 @@ class ControlsTests(unittest.TestCase):
    called=[];main.settings_requested.connect(lambda:called.append(True));main.settings_button.click();self.assertTrue(called)
    import ctypes
    from ctypes import wintypes
-   msg=wintypes.MSG();msg.message=0x21;self.assertEqual(main.nativeEvent(None,ctypes.addressof(msg)),(True,3))
+   msg=wintypes.MSG();msg.message=0x21;self.assertEqual(main.nativeEvent(None,ctypes.addressof(msg)),(True,1))
    build.close();tc.close();main.close()
 if __name__=='__main__':unittest.main()
 
