@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt,QTimer,QPoint,pyqtSignal
 from PyQt5.QtGui import QCursor,QFont,QColor,QPainter,QPen,QLinearGradient
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QDialog,QListWidget,QMessageBox,QCheckBox,QApplication,QGraphicsDropShadowEffect,QFrame
 from build_order_core import load_order,Progress
+from speech_clip import clip_duration,prepare_cache
 from preference_io import read_object
 from tc_reminder.voice import RepeatingVoice
 from tc_reminder import native
@@ -115,7 +116,7 @@ class BuildOrders:
   try:
    payload=[dict(index=i,text=s.text) for i,s in enumerate(order.steps)];key=hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:24]
    self.cache=self.folder/'.voice-cache'/key;self.cache.mkdir(parents=True,exist_ok=True);manifest=self.cache/'speech.json';manifest.write_text(json.dumps(payload),encoding='utf-8')
-   if not all((self.cache/f'{i}.wav').is_file() for i in range(len(payload))):
+   if not prepare_cache(self.cache,len(payload)):
     script=(self.assets/'build_order_voice.ps1').read_text(encoding='utf-8-sig').split('\n',1)[1]
     command='$Manifest=$env:AGEOFDUCK_SPEECH_MANIFEST; $Output=$env:AGEOFDUCK_SPEECH_OUTPUT; '+script
     env=os.environ.copy();env.update(AGEOFDUCK_SPEECH_MANIFEST=str(manifest),AGEOFDUCK_SPEECH_OUTPUT=str(self.cache))
@@ -187,9 +188,7 @@ class BuildOrders:
     elif self.voice_failed:self.visual_fallback(step,now)
     elif clip and clip.is_file():
      try:
-      with wave.open(str(clip),'rb') as f:
-       duration=f.getnframes()/f.getframerate()
-       if duration<=0:raise ValueError('Empty voice clip')
+      duration=clip_duration(clip)
       self.tc.voice.stop();self.voice.path=str(clip)
       if self.voice.update(True,now,event=(self.prefs.get('selected'),step.id)) is False:raise RuntimeError('Playback failed')
       self.audio_busy=True;self.voice_wait_since=None;self.deadline=now+max(duration+.08,10 if '.' in step.id else 0)
@@ -207,7 +206,7 @@ class BuildOrders:
   else:self.spoken.hide()
   extra=self.status if step and self.deadline is None and safe else ('Playing instruction' if speaking else 'Follow this instruction' if step else 'Waiting for villager '+str(self.progress.next_step().villagers) if self.progress.next_step() else 'Build order complete')
   if not safe:extra='Paused — waiting for running gameplay.'
-  if safe and self.voice_failed:extra='Visual instructions — reselect the order to retry voice'
+  if safe and self.voice_failed and step:extra='Visual instructions — reselect the order to retry voice'
   self.panel.next.setText(extra);self.panel.adjustSize()
  def close(self):
   self.timer.stop();self.pause_audio();self.panel.close();self.spoken.close()

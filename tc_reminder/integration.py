@@ -59,9 +59,9 @@ class TCController(QObject):
         self.last_frame=0;self.last_good=0;self.outside_since=None;self.closed=False;self.was_game=False
         self.owns_capture=native.single_instance()
         self.enabled=QAction('TC / housing reminders',self);self.enabled.setCheckable(True)
-        self.enabled.setChecked(self.prefs.get('enabled',True));self.enabled.setEnabled(self.owns_capture)
+        self.enabled.setChecked(self.prefs.get('enabled') if type(self.prefs.get('enabled')) is bool else True);self.enabled.setEnabled(self.owns_capture)
         if not self.owns_capture:self.enabled.setText('TC reminders: close standalone app and restart Age of Duck')
-        self.mute=QAction('Mute all reminder voices',self);self.mute.setCheckable(True);self.mute.setChecked(self.prefs.get('mute',False))
+        self.mute=QAction('Mute all reminder voices',self);self.mute.setCheckable(True);self.mute.setChecked(self.prefs.get('mute') if type(self.prefs.get('mute')) is bool else False)
         self.enabled.toggled.connect(self.changed);self.mute.toggled.connect(self.changed)
         self.panel.mute_requested.connect(self.mute.trigger)
         menu.addSeparator();menu.addAction(self.enabled);menu.addAction(self.mute)

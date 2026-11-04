@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.workflow }}-${{ github.ref }}
+  group: windows-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -36,10 +36,14 @@ jobs:
           test_overlay_layout test_companion_controls test_companion_focus
           test_hud_calibration test_settings_window test_tc_panel
           test_housed_fallback test_villager_robustness
+      - name: Validate the bundled game catalog
+        run: python check_game_data.py
       - name: Build the Windows application
         run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
       - name: Check packaged runtime resources
         run: python scripts/check_bundle.py dist/AgeOfDuck
+      - name: Smoke test packaged startup and shutdown
+        run: python scripts/smoke_package.py dist/AgeOfDuck/AgeOfDuck.exe
       - name: Upload package for manual Windows testing
         uses: actions/upload-artifact@v4
         with:

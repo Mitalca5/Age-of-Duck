@@ -31,6 +31,7 @@ class RepeatingVoice:
         self.advance(now)
         if not active:
             self.stop();return
+        if not self.active and self.next_due is not None and now<self.next_due:return False
         if event is not None and (event==self.last_event or event==self.pending_event):return
         if event is not None or self.next_due is None or now>=self.next_due:
             try:

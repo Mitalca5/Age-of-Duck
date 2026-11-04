@@ -171,6 +171,15 @@ class SpeechRecoveryTests(unittest.TestCase):
             self.b.load(path)
         self.assertEqual(self.b.order.name,'Test');self.assertTrue(self.b.voice_failed)
 
+    def test_failed_reminder_playback_is_throttled(self):
+        play=Mock(side_effect=RuntimeError('No audio'))
+        voice=RepeatingVoice('missing.wav',play=play)
+        self.assertFalse(voice.update(True,1,event='house'))
+        self.assertFalse(voice.update(True,2,event='house'))
+        self.assertEqual(play.call_count,1)
+        self.assertFalse(voice.update(True,6,event='house'))
+        self.assertEqual(play.call_count,2)
+
     def test_failed_volume_conversion_does_not_acknowledge(self):
         voice=RepeatingVoice('missing.wav',play=Mock())
         with patch.object(RepeatingVoice,'volume_percent',50):
@@ -231,6 +240,57 @@ class SettingsAndCatalogTests(unittest.TestCase):
             self.assertFalse(r.usable(size))
 
 
+class CacheAndStartupTests(unittest.TestCase):
+    def test_corrupt_cache_is_removed_for_retry(self):
+        from speech_clip import prepare_cache
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'0.wav';path.write_bytes(b'broken')
+            self.assertFalse(prepare_cache(Path(tmp),1))
+            self.assertFalse(path.exists())
+
+    def test_truncated_clip_is_not_treated_as_complete(self):
+        from speech_clip import prepare_cache
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'0.wav'
+            with wave.open(str(path),'wb') as f:
+                f.setparams((1,2,8000,0,'NONE','not compressed'));f.writeframes(b'\0\0'*8000)
+            path.write_bytes(path.read_bytes()[:-100])
+            self.assertFalse(prepare_cache(Path(tmp),1))
+            self.assertFalse(path.exists())
+
+    def test_complete_clip_is_preserved(self):
+        from speech_clip import prepare_cache,clip_duration
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'0.wav'
+            with wave.open(str(path),'wb') as f:
+                f.setparams((1,2,8000,0,'NONE','not compressed'));f.writeframes(b'\0\0'*8000)
+            self.assertTrue(prepare_cache(Path(tmp),1))
+            self.assertEqual(clip_duration(path),1)
+
+    def test_invalid_tc_preference_values_recover_at_startup(self):
+        from tc_reminder.integration import TCController
+        from PyQt5.QtWidgets import QMenu
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'tc.json'
+            path.write_text(json.dumps({'enabled':[], 'mute':{},'manual_tcs':float('inf')}))
+            menu=QMenu()
+            with patch('tc_reminder.native.single_instance',return_value=True):
+                controller=TCController(APP,menu,path)
+            try:
+                controller.timer.stop()
+                self.assertTrue(controller.enabled.isChecked())
+                self.assertFalse(controller.mute.isChecked())
+                self.assertEqual(controller.manual_tcs,0)
+            finally:controller.close()
+
+    def test_installer_uses_application_version(self):
+        import re
+        from AgeofDuck import CURRENT_VERSION
+        script=(ROOT/'installer/AgeOfDuckInstaller.iss').read_text()
+        self.assertEqual(re.search(r'#define MyAppVersion "([^"]+)"',script)[1],CURRENT_VERSION)
+        self.assertIn('OutputBaseFilename=AgeOfDuck-Setup-v{#MyAppVersion}',script)
+
+
 class UpdateShutdownTests(unittest.TestCase):
     def test_background_discards_completed_download_after_close(self):
         from update_io import start_background
@@ -251,6 +311,32 @@ class UpdateShutdownTests(unittest.TestCase):
             with patch('update_ui.launch_installer') as launch:c.on_downloaded(str(path))
             launch.assert_not_called();self.assertFalse(path.exists())
             c.deleteLater()
+
+    def test_update_result_is_delivered_on_gui_thread(self):
+        from PyQt5.QtCore import QThread
+        from PyQt5.QtWidgets import QAction
+        from update_ui import UpdateController
+        import time
+        entered=threading.Event();release=threading.Event();seen=[]
+        def fetch(*args):
+            entered.set();release.wait(2);return (None,None)
+        action=QAction()
+        c=UpdateController(APP,Mock(),action,lambda:None,'unused','2.0.1','unused')
+        try:
+            with patch('update_ui.fetch_update',side_effect=fetch), \
+                 patch('update_ui.QMessageBox.information',side_effect=lambda *args:seen.append(QThread.currentThread()==APP.thread())):
+                c.check()
+                self.assertTrue(entered.wait(2))
+                self.assertFalse(action.isEnabled())
+                APP.processEvents()  # UI remains responsive while network work is blocked.
+                release.set()
+                deadline=time.monotonic()+3
+                while not seen and time.monotonic()<deadline:
+                    APP.processEvents();time.sleep(.01)
+            self.assertEqual(seen,[True])
+            self.assertTrue(action.isEnabled())
+        finally:
+            release.set();c.close();c.deleteLater()
 
     def test_fork_without_release_gets_specific_error(self):
         from update_io import fetch_update

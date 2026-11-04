@@ -1531,7 +1531,8 @@ def main():
     else:
         settings.show_and_focus()
 
-    QTimer.singleShot(3000, lambda: None)
+    if '--smoke-test' in sys.argv:
+        QTimer.singleShot(100, app.quit)
     sys.exit(app.exec_())
 
 
