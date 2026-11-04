@@ -32,9 +32,9 @@ Additional defensive fix: bound remapped queue width before resizing very wide, 
 
 ## Verification
 
-The Windows suite runs with the published image fixtures and synthetic profiles, without a game or live provider connection. It covers Qt layouts/controls, calibration, counters, provider normalization, reminder lifecycle, speech failure recovery, settings, updater threads and packaging. The expanded suite contains 153 tests, including 33 new fork regressions.
+The Windows suite runs with the published image fixtures and synthetic profiles, without a game or live provider connection. It covers Qt layouts/controls, calibration, counters, provider normalization, reminder lifecycle, speech failure recovery, settings, updater threads and packaging. The current suite contains 182 tests, including 17 regressions from the performance/resource pass; the latest Actions run records the verified result.
 
-CI also checks the actual source-data hashes, verifies calibration approval, builds with PyInstaller, checks bundled runtime resources and starts the resulting executable with isolated preferences. `--smoke-test` exits after all application controllers are constructed. The artifact contains the entire application folder and must be extracted together.
+CI also checks the actual source-data hashes, verifies calibration approval and measures queue analysis against the previous implementation. EXE generation is now opt-in: only a manual workflow dispatch with `build_package: true` builds with PyInstaller, checks bundled resources and starts the executable with isolated preferences. `--smoke-test` exits after all application controllers are constructed. The artifact contains the entire application folder and must be extracted together.
 
 The first Windows run exposed a platform-dependent path comparison in our earlier packaging test; it was corrected to compare POSIX resource names. The integrated version then passed 146 tests and built successfully. The next expansion passed 153 tests and exposed CRLF hash changes; the branch adds the corrective Git attributes and approval check. Consult the latest Actions run for the final result.
 
@@ -46,3 +46,31 @@ The first Windows run exposed a platform-dependent path comparison in our earlie
 - No installer has been published and the fork's Main branch is unchanged. This is a reviewable integration branch, not a claim of a bug-free release.
 - Named HUD profiles and Spanish localization remain feature/design work (upstream issues #6 and #7). The speech-failure behavior discussed in #5 is implemented here.
 - Keep the MIT license and original attribution. Website/Discord/donation destinations still refer to the original project; a fork release needs an explicit identity/distribution decision.
+
+## Resource and performance pass — November 4
+
+| Finding | Correction |
+| --- | --- |
+| Queue recognition copied the entire RGB screenshot and repeatedly converted the same queue to grayscale/binary. | Copy only the queue readout and its border probes; share prepared grayscale/binary images across template groups. Preserve exact results against the previous implementation on all published samples and queue fixtures. |
+| Already-normalized ultrawide frames were copied again. | Return the original image when its height already matches the normalization height. |
+| Unchanged guide steps rebuilt text/layout every 100 ms; hidden panels polled cursor/window styles. | Cache displayed progress, invalidate on scale changes, skip hidden input polling, and change window flags/position only when necessary. |
+| Hidden companion controls checked focus periodically. | Refresh availability only when controls or volume settings are visible. |
+| Peak queries from old matches remained queued and cached values grew indefinitely. | Cancel obsolete pending queries, cap outstanding work at 8 and cache at 256 entries, expire entries after 5 minutes. Keep mode-specific keys. |
+| Profile clearing and peak collection could mutate shared tasks concurrently; shutdown could race submission. | Serialize clear, enrichment and pool shutdown with the existing state lock. A controlled two-thread regression covers clearing during peak processing. |
+| GUI-triggered disconnect waited for a WebSocket close handshake. | Abort the transport immediately with shutdown; normal connection cleanup remains in the worker. |
+| Focus could move to the companion during screenshot acquisition. | Recheck companion focus after capture before accepting the frame. |
+| Quitting within the volume debounce interval lost the last adjustment. | Flush pending volume persistence on application shutdown. |
+| Diagnostic files were written repeatedly to the program directory. | Store beside user preferences and write only changed content; retry failed writes. Preference write failures retain in-memory choices and log the error. |
+
+Measured on the Windows CI runner in [run 41752414555](https://github.com/Mitalca5/Age-of-Duck/actions/runs/41752414555), using five calls per implementation and median milliseconds:
+
+| Public 2560×1440 screenshot | Previous queue analysis | Optimized queue analysis |
+| --- | ---: | ---: |
+| selected-three.png | 170.222 ms | 164.440 ms |
+| foundation-five.png | 160.820 ms | 148.934 ms |
+| independent-four.png | 183.015 ms | 171.599 ms |
+
+This is roughly 3–7% less time in **queue analysis**, not a measurement of total application CPU use or game FPS. Timing varies between runners. The RGB working copy for default queue-border checks shrinks by about 98%; the original screenshot and other application allocations still exist. The benchmark is diagnostic, with no fragile timing threshold in CI. The comparison implementation in `queue_reference.py` is test-only.
+
+The first performance run passed 181 tests and skipped all four packaging steps. The final synchronization regression brings the suite to 182. No EXE was generated for this pass. The earlier packaged smoke test applies to commit `7e01ff6`, not to these later source changes.
+

@@ -163,8 +163,12 @@ class RecsWorker(QObject):
             self.profile_id=value;self.generation+=1;self.clear()
         self._disconnect()
     def stop(self):
-        self.running=False;self._disconnect();self.peak_pool.shutdown(wait=False,cancel_futures=True)
+        with self._state_lock:
+            self.running=False;self.peak_pool.shutdown(wait=False,cancel_futures=True)
+        self._disconnect()
     def clear(self):
+        with self._state_lock:self._clear()
+    def _clear(self):
         self.last_payload=None;self.current_data=None
         for key,future in list(self.peak_tasks.items()):
             if future.cancel():del self.peak_tasks[key]
@@ -189,6 +193,8 @@ class RecsWorker(QObject):
         if not self.live:self.in_game_signal.emit(True)
         self.live=True;self._cleared=False
     def enrich_peaks(self,pid,generation):
+        with self._state_lock:self._enrich_peaks(pid,generation)
+    def _enrich_peaks(self,pid,generation):
         if not self.running or generation!=self.generation or pid!=self.profile_id:return
         now=time.monotonic()
         for key,(stamp,_) in list(self.peak_cache.items()):

@@ -1,6 +1,7 @@
 """Functional/equivalence checks for the performance pass; no timing assertions."""
 import json
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import Future
@@ -91,6 +92,36 @@ class ProviderResourceTests(unittest.TestCase):
     def test_stopped_worker_rejects_late_response(self):
         w=self.worker();w.stop();w.accept(self.data(),'1001',0)
         self.assertFalse(w.live);self.assertIsNone(w.current_data)
+
+    def test_profile_clear_waits_for_inflight_peak_processing(self):
+        w=self.worker();w.current_data=self.data()
+        player=w.current_data['live']['players'][1]
+        entered=threading.Event();release=threading.Event()
+        clearing=threading.Event();cleared=threading.Event();errors=[]
+        class PausedFuture(Future):
+            def done(self):
+                entered.set()
+                if not release.wait(3):raise TimeoutError('Test did not release peak processing')
+                return super().done()
+        future=PausedFuture();w.peak_tasks[(str(player['id']),3)]=future
+        def enrich():
+            try:w.enrich_peaks('1001',0)
+            except Exception as exc:errors.append(exc)
+        def clear():
+            clearing.set();w.clear();cleared.set()
+        a=threading.Thread(target=enrich);b=threading.Thread(target=clear)
+        with patch.object(w.peak_pool,'submit',side_effect=lambda *args:Future()):
+            a.start()
+            try:
+                self.assertTrue(entered.wait(3));b.start()
+                self.assertTrue(clearing.wait(3))
+                self.assertFalse(cleared.wait(.1))
+            finally:
+                release.set();a.join(3)
+                if b.ident is not None:b.join(3)
+        self.assertFalse(a.is_alive());self.assertFalse(b.is_alive())
+        self.assertEqual(errors,[]);self.assertTrue(cleared.is_set())
+        self.assertIsNone(w.current_data);self.assertTrue(future.cancelled())
 
 class UIAndCaptureTests(unittest.TestCase):
     def test_companion_focus_during_capture_discards_frame(self):
