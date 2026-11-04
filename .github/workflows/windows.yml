@@ -3,7 +3,7 @@ name: Windows checks
 on:
   pull_request:
   push:
-    branches: [Main]
+    branches: [Main, 'preview/queue-skin-67ec887']
   workflow_dispatch:
     inputs:
       build_package:
@@ -50,16 +50,16 @@ jobs:
       - name: Verify recognition calibration approval
         run: python -c "from tc_reminder.validation_gate import approved; assert approved(), 'Calibration fingerprint changed'"
       - name: Build the Windows application
-        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_package) || (github.event_name == 'push' && github.ref == 'refs/heads/preview/queue-skin-67ec887')
         run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
       - name: Check packaged runtime resources
-        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_package) || (github.event_name == 'push' && github.ref == 'refs/heads/preview/queue-skin-67ec887')
         run: python scripts/check_bundle.py dist/AgeOfDuck
       - name: Smoke test packaged startup and shutdown
-        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_package) || (github.event_name == 'push' && github.ref == 'refs/heads/preview/queue-skin-67ec887')
         run: python scripts/smoke_package.py dist/AgeOfDuck/AgeOfDuck.exe
       - name: Upload package for manual Windows testing
-        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        if: (github.event_name == 'workflow_dispatch' && inputs.build_package) || (github.event_name == 'push' && github.ref == 'refs/heads/preview/queue-skin-67ec887')
         uses: actions/upload-artifact@v4
         with:
           name: AgeOfDuck-windows-${{ github.sha }}
