@@ -111,6 +111,14 @@ class LearningIntegrationTests(unittest.TestCase):
         with patch.object(c.detector,'analyze_queue',return_value=result):c.learn_first_villager()
         self.assertEqual(len(c.learned.entries),0)
 
+    def test_green_progress_heuristic_does_not_prevent_explicit_teaching(self):
+        c=self.calibrator();rgb=np.asarray(custom_tile()).copy()
+        rgb[2:35,2:35]=(rgb[2:35,2:35]*np.array([.6,1,.6])).astype(np.uint8)
+        c.frame=queue_frame([Image.fromarray(rgb)])
+        c.learn_first_villager()
+        self.assertEqual(len(c.learned.entries),1,c.learn_status.text())
+        self.assertIn('1 villager',c.readouts['queue'])
+
     def test_unknown_icon_is_not_confident_idle_evidence(self):
         from tc_reminder.vision import Detector
         from tc_reminder.core import Observation,Reminder

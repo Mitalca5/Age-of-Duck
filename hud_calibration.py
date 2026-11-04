@@ -313,7 +313,7 @@ class HudCalibrator(QWidget):
         if not first_hits and not first_unknown:
             self.learn_status.setText('No queue tile found in the first position. Align the box with the first square icon.')
             return
-        if any(h['kind']!='villager' for h in first_hits):
+        if any(h['kind']!='villager' and h.get('name')!='research-progress' for h in first_hits):
             self.learn_status.setText('The first icon appears to be research, another unit, or blocked. Use a training villager.')
             return
         try:
