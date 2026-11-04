@@ -1,12 +1,14 @@
 # 🦆 Age of Duck: the AoE2 DE helper overlay
 
+> **Fork under validation:** this branch integrates fixes maintained by Mitalca5. See [the functional audit](docs/fork-audit.md) and [Windows checks](https://github.com/Mitalca5/Age-of-Duck/actions). No fork installer release has been published yet. Website and Discord links below belong to the original project.
+
 **A free, open-source in-game overlay for Age of Empires II: Definitive Edition.**
 Click-for-counter, build-order coaching, Town Centre / housing alerts and live lobby info, in a translucent window that stays out of your way.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay)](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Mitalca5/Age-of-Duck)](https://github.com/Mitalca5/Age-of-Duck/releases)
 
-**[Download](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest)** · **[Website & build-order library](https://ageofduck.com)** · **[Discord](https://discord.gg/hWsa7KS9nw)**
+**[Download](https://github.com/Mitalca5/Age-of-Duck/releases)** · **[Website & build-order library](https://ageofduck.com)** · **[Discord](https://discord.gg/hWsa7KS9nw)**
 
 <p align="center">
   <img src="https://ageofduck.com/img/overlay-counters.webp" alt="Age of Duck overlay with a unit selected and counters shown" width="340">
@@ -29,7 +31,9 @@ Age of Duck only **reads pixels on your screen** and public match data. It never
 
 ## Install
 
-Download `AgeOfDuckInstaller-vX.Y.Z.exe` from the [latest release](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest). Hashes are in `SHA256SUMS.txt`. The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info, then Run anyway**.
+For this development branch, download the Windows artifact from a successful Actions run and extract the entire folder. Run `AgeOfDuck.exe` inside it. A release installer will be available only after manual game testing.
+
+For published releases, download `AgeOfDuckInstaller-vX.Y.Z.exe` from the [latest release](https://github.com/Mitalca5/Age-of-Duck/releases). Hashes are in `SHA256SUMS.txt`. The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info, then Run anyway**.
 
 Then open Settings, enter your AoE2 profile ID (there's a *Find profile ID* button), and start a match. Run the game in **Windowed or Borderless** mode.
 
@@ -38,8 +42,9 @@ Then open Settings, enter your AoE2 profile ID (there's a *Find profile ID* butt
 Requirements: Windows 10/11 (64-bit) and Python 3.11 or newer.
 
 ```bat
-git clone https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay
-cd Age-of-Duck-Mod-AOE2-In-Game-Overlay
+git clone https://github.com/Mitalca5/Age-of-Duck
+cd Age-of-Duck
+git checkout fix/fork-stability
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python AgeofDuck.py

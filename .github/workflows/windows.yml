@@ -38,6 +38,8 @@ jobs:
           test_housed_fallback test_villager_robustness
       - name: Validate the bundled game catalog
         run: python check_game_data.py
+      - name: Verify recognition calibration approval
+        run: python -c "from tc_reminder.validation_gate import approved; assert approved(), 'Calibration fingerprint changed'"
       - name: Build the Windows application
         run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
       - name: Check packaged runtime resources
