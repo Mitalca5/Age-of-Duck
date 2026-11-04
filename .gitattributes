@@ -1,0 +1,3 @@
+# Keep checksum-verified calibration and game data identical on Windows and Unix.
+* text=auto
+*.json text eol=lf

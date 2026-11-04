@@ -1,9 +1,10 @@
 """In-game build-order window: translucent title bar, done / current / upcoming steps."""
-from PyQt5.QtCore import QRectF, Qt, QTimer
+from PyQt5.QtCore import QRect, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from screen_placement import visible_position
+from preference_io import valid_position
 from tc_reminder import native
 from ui_bits import ElidedLabel, SizeButton
 
@@ -180,12 +181,17 @@ class BuildPanel(QWidget):
 
     # -- behaviour ------------------------------------------------------------
     def hit_test(self):
+        if not self.isVisible():
+            return
         pos = self.mapFromGlobal(QCursor.pos())
         interactive = self.bar.geometry().contains(pos) or self.drag is not None
         flags = native.u.GetWindowLongPtrW(self.hwnd, -20)
-        native.u.SetWindowLongPtrW(self.hwnd, -20, flags & ~0x20 if interactive else flags | 0x20)
+        wanted = flags & ~0x20 if interactive else flags | 0x20
+        if flags != wanted:
+            native.u.SetWindowLongPtrW(self.hwnd, -20, wanted)
 
     def set_scale(self, scale):
+        self._progress_key = None
         self.setFixedWidth(round(350 * scale))
         base = max(8, round(10 * scale))
         self.title.setFont(QFont("Segoe UI", base + 1, QFont.Bold))
@@ -210,6 +216,10 @@ class BuildPanel(QWidget):
         self.adjustSize()
 
     def show_progress(self, progress, safe):
+        key = (id(progress.order), progress.current, progress.last, progress.high)
+        if key == getattr(self, '_progress_key', None):
+            return
+        self._progress_key = key
         anchor = progress.current or progress.last
         steps = progress.order.steps
         if anchor:
@@ -251,9 +261,10 @@ class BuildPanel(QWidget):
         if self.drag is not None:
             return
         pos = self.owner.prefs.get("position")
-        if isinstance(pos, list) and len(pos) == 2:
-            self.move(*map(int, pos))
+        rect = QRect(self.geometry())
+        if valid_position(pos):
+            rect.moveTo(*pos)
         else:
             area = QApplication.primaryScreen().availableGeometry()
-            self.move(area.left() + 20, area.top() + 160)
-        self.move(visible_position(self.geometry(), [s.availableGeometry() for s in QApplication.screens()]))
+            rect.moveTo(area.left() + 20, area.top() + 160)
+        self.move(visible_position(rect, [s.availableGeometry() for s in QApplication.screens()]))

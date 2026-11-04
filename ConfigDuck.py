@@ -88,7 +88,8 @@ def primary_unit_type(value):
 def read_json(path, fallback):
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+            value = json.load(handle)
+            return value if isinstance(value,type(fallback)) else copy.deepcopy(fallback)
     except Exception:
         return copy.deepcopy(fallback)
 

@@ -1,12 +1,14 @@
 # 🦆 Age of Duck: the AoE2 DE helper overlay
 
+> **Fork under validation:** this branch integrates fixes maintained by Mitalca5. See [the functional audit](docs/fork-audit.md) and [Windows checks](https://github.com/Mitalca5/Age-of-Duck/actions). No fork installer release has been published yet. Website and Discord links below belong to the original project.
+
 **A free, open-source in-game overlay for Age of Empires II: Definitive Edition.**
 Click-for-counter, build-order coaching, Town Centre / housing alerts and live lobby info, in a translucent window that stays out of your way.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay)](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Mitalca5/Age-of-Duck)](https://github.com/Mitalca5/Age-of-Duck/releases)
 
-**[Download](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest)** · **[Website & build-order library](https://ageofduck.com)** · **[Discord](https://discord.gg/hWsa7KS9nw)**
+**[Download](https://github.com/Mitalca5/Age-of-Duck/releases)** · **[Website & build-order library](https://ageofduck.com)** · **[Discord](https://discord.gg/hWsa7KS9nw)**
 
 <p align="center">
   <img src="https://ageofduck.com/img/overlay-counters.webp" alt="Age of Duck overlay with a unit selected and counters shown" width="340">
@@ -18,8 +20,8 @@ Click-for-counter, build-order coaching, Town Centre / housing alerts and live l
 - **Build orders (beta).** Load a build order and the overlay follows your villager count, highlights the current step and reads it out loud. Create and share them at [ageofduck.com/build-orders](https://ageofduck.com/build-orders/).
 - **Idle TC / Housed alerts (beta).** Counts your Town Centres and warns you, with a voice, when one is idle, when you're close to the cap, and when you're housed.
 - **HUD set-up (beta).** Draw the population, villager, clock and queue areas yourself for any HUD skin, resolution or UI size.
-- **Lobby info.** Civ, ELO and peak rating across ladders, colour-coded teams, AI players labelled, and badges for all 56 civilisations.
-- **Non-intrusive.** Translucent, draggable and resizable, and it never takes focus from the game.
+- **Lobby info.** Civ, current ELO and peak rating for the current match's ladder, colour-coded teams, AI players labelled, and badges for all 56 civilisations.
+- **Non-intrusive.** Translucent, draggable and resizable, and automatic updates do not steal focus. Click the main overlay to focus it; Alt+F4 hides it to the tray while the app keeps running. Use **Show overlay** in the tray menu or double-click its icon to restore it.
 
 More screenshots are on the [website](https://ageofduck.com).
 
@@ -29,7 +31,9 @@ Age of Duck only **reads pixels on your screen** and public match data. It never
 
 ## Install
 
-Download `AgeOfDuckInstaller-vX.Y.Z.exe` from the [latest release](https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay/releases/latest). Hashes are in `SHA256SUMS.txt`. The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info, then Run anyway**.
+For this development branch, download the Windows artifact from a successful Actions run and extract the entire folder. Run `AgeOfDuck.exe` inside it. A release installer will be available only after manual game testing.
+
+For published releases, download `AgeOfDuckInstaller-vX.Y.Z.exe` from the [latest release](https://github.com/Mitalca5/Age-of-Duck/releases). Hashes are in `SHA256SUMS.txt`. The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info, then Run anyway**.
 
 Then open Settings, enter your AoE2 profile ID (there's a *Find profile ID* button), and start a match. Run the game in **Windowed or Borderless** mode.
 
@@ -38,14 +42,19 @@ Then open Settings, enter your AoE2 profile ID (there's a *Find profile ID* butt
 Requirements: Windows 10/11 (64-bit) and Python 3.11 or newer.
 
 ```bat
-git clone https://github.com/BubbleDuckz/Age-of-Duck-Mod-AOE2-In-Game-Overlay
-cd Age-of-Duck-Mod-AOE2-In-Game-Overlay
+git clone https://github.com/Mitalca5/Age-of-Duck
+cd Age-of-Duck
+git checkout fix/fork-stability
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python AgeofDuck.py
 ```
 
-To build the executable, run `setup_env.bat` once and then `make EXE.bat`. To build the installer, install [Inno Setup](https://jrsoftware.org/isinfo.php) and compile `installer/AgeOfDuckInstaller.iss`. Run a test with, for example, `python -m unittest test_build_orders`. Some tests need large game screenshots or real player data, which aren't included, so those will fail until you supply your own fixtures.
+To build the executable, run `setup_env.bat` once and then `make EXE.bat`. To build the installer, install [Inno Setup](https://jrsoftware.org/isinfo.php) and compile `installer/AgeOfDuckInstaller.iss`. Run a test with, for example, `python -m unittest test_build_orders`. Some vision tests need large game screenshots, which aren't included, so those will fail until you supply your own fixtures.
+
+The live-match provider tests use fabricated profiles included in `fixtures/`;
+they need no personal player data or network connection. After installing the
+dependencies, run them with `python -m unittest test_recs_provider`.
 
 ## Project layout
 
@@ -75,3 +84,4 @@ The source code is released under the [MIT License](LICENSE). Game artwork and s
 - Civilisation and unit information derived in part from the [Age of Empires Wiki](https://ageofempires.fandom.com/wiki/Category:Age_of_Empires_II) (CC BY-SA).
 
 Age of Duck is an unofficial fan project, created under Microsoft's [Game Content Usage Rules](https://www.xbox.com/en-US/developers/rules). It is not endorsed by or affiliated with Microsoft, Xbox Game Studios or World's Edge. Age of Empires II © Microsoft Corporation.
+

@@ -17,6 +17,7 @@ from .population import StableHousingReminder,BuildHouseEvents
 from .voice import RepeatingVoice,choose_cue
 
 from .panel import TCPanel
+from preference_io import read_object
 
 class TCController(QObject):
     frame_observed=pyqtSignal(object,object,float)
@@ -27,12 +28,12 @@ class TCController(QObject):
         from villager_reader import VillagerReader
         self.villager_reader=VillagerReader()
         self.settings_path=Path(settings_path)
-        self.diagnostics=Path(sys.executable).parent/'tc-live-status.json' if getattr(sys,'frozen',False) else ROOT/'tc-live-status.json'
+        self.diagnostics=self.settings_path.parent/'tc-live-status.json'
+        self._last_diagnostic_text=None
         self.last_diagnostic=0
         self.latest_state={}
         self.error=''
-        try:self.prefs=json.loads(self.settings_path.read_text())
-        except (OSError,ValueError):self.prefs={}
+        self.prefs=read_object(self.settings_path)
         self.view_visible=bool(self.prefs.get('view_visible',True))
         self.panel=TCPanel();self.panel.offset=self.prefs.get('position');self.main_overlay=main_overlay
         self.panel.position_changed.connect(self.save_position)
@@ -50,7 +51,7 @@ class TCController(QObject):
         from hud_regions import HudRegions
         self.regions=HudRegions(self.settings_path.parent/'hud_regions.json');self.detector.regions=self.regions
         try:self.manual_tcs=max(0,min(20,int(self.prefs.get('manual_tcs',0))))
-        except (TypeError,ValueError):self.manual_tcs=0
+        except (TypeError,ValueError,OverflowError):self.manual_tcs=0
         self.selection=SelectionEvidence();self.continuity=MatchContinuity();self.match_session=None;self.match_generation=0;self.housing=StableHousingReminder()
         self.voice=RepeatingVoice(ROOT/'idle.wav');self.voice_active=False
         self.build_events=BuildHouseEvents();self.voice_event=None
@@ -59,9 +60,9 @@ class TCController(QObject):
         self.last_frame=0;self.last_good=0;self.outside_since=None;self.closed=False;self.was_game=False
         self.owns_capture=native.single_instance()
         self.enabled=QAction('TC / housing reminders',self);self.enabled.setCheckable(True)
-        self.enabled.setChecked(self.prefs.get('enabled',True));self.enabled.setEnabled(self.owns_capture)
+        self.enabled.setChecked(self.prefs.get('enabled') if type(self.prefs.get('enabled')) is bool else True);self.enabled.setEnabled(self.owns_capture)
         if not self.owns_capture:self.enabled.setText('TC reminders: close standalone app and restart Age of Duck')
-        self.mute=QAction('Mute all reminder voices',self);self.mute.setCheckable(True);self.mute.setChecked(self.prefs.get('mute',False))
+        self.mute=QAction('Mute all reminder voices',self);self.mute.setCheckable(True);self.mute.setChecked(self.prefs.get('mute') if type(self.prefs.get('mute')) is bool else False)
         self.enabled.toggled.connect(self.changed);self.mute.toggled.connect(self.changed)
         self.panel.mute_requested.connect(self.mute.trigger)
         menu.addSeparator();menu.addAction(self.enabled);menu.addAction(self.mute)
@@ -107,7 +108,8 @@ class TCController(QObject):
         self.panel_scale_changed.emit(self.panel_scale)
     def set_view_visible(self,value,game=None):
         self.view_visible=bool(value);self.prefs['view_visible']=self.view_visible
-        self.settings_path.write_text(json.dumps(self.prefs))
+        try:self.settings_path.write_text(json.dumps(self.prefs))
+        except OSError:logging.exception('Cannot save TC visibility')
         self.sync_view(game or native.foreground_game(),self.enabled.isChecked() and self.owns_capture)
     def sync_view(self,game,enabled):
         """Keep this panel independent of capture latency and the guide window."""
@@ -179,6 +181,9 @@ class TCController(QObject):
                 r['match_pending']=self.continuity.pending is not None
                 if r['new_match']:
                     self.reminder.forget();self.selection=SelectionEvidence();self.housing=StableHousingReminder()
+                    self.build_events=BuildHouseEvents();self.voice.reset();self.voice_event=None
+                    self.blocked_since=None;self.blocked_last=0
+                    self.housing_state='';self.idle_alert=False
                 if self.continuity.pending is not None:r['confident']=False
                 self.frame_observed.emit(game,r,stamp)
                 if self.observer_enabled:
@@ -188,19 +193,25 @@ class TCController(QObject):
                 obs=Observation(busy=r['busy_upper_bound'],selected_tcs=r['selected_tcs'],selection_verified=verified,
                     foreground=True,gameplay=r['gameplay'],paused=r['context']=='pause',advancing=r['advancing'],
                     confident=r['confident'],housed=bool(r['housed']),session=game[1],reason=r['reason'])
-                if self.manual_tcs:self.reminder.total=self.manual_tcs
-                text,_,reason=self.reminder.step(obs,now,validated=self.detector.alerts_validated)
-                if self.manual_tcs:self.reminder.total=self.manual_tcs
-                housing=self.housing.update(r.get('population'),r['gameplay'] and r['advancing'] and self.continuity.pending is None,now)
+                text,_,reason=self.reminder.step(obs,now,validated=self.detector.alerts_validated,
+                    manual_total=self.manual_tcs or None)
+                housing_safe=r['gameplay'] and r['advancing'] and self.continuity.pending is None
+                housing=self.housing.update(r.get('population'),housing_safe,now)
                 self.build_events.update(r.get('population'),housing,self.housing.seen>=2)
                 self.voice_event=self.build_events.event if housing=='Build House' else None
                 # The population counter is not always readable (other UI scales, the flashing
                 # red/yellow box). The blocked queue icons are independent evidence, so a Town
                 # Centre that has been blocked for a second still triggers the Housed warning.
-                housing=housing or self.queue_blocked(text=='Population blocked' or bool(r.get('pop_flash')),now)
+                if housing_safe:
+                    housing=housing or self.queue_blocked(text=='Population blocked' or bool(r.get('pop_flash')),now)
+                else:
+                    self.blocked_since=None;self.blocked_last=0
                 self.housing_state=housing;self.idle_alert=text=='Check TC queues'
                 self.latest_state=dict(match_id=r["match_id"],new_match=r["new_match"],villagers=r.get("villagers"),build_orders_enabled=self.observer_enabled,population=r.get('population'),housing=housing,tc_alert=text,reason=reason,context=r['context'],advancing=r['advancing'],confident=r['confident'],remembered_tcs=self.reminder.total,active=r['busy_upper_bound'],voice_event=self.voice_event)
-                total=self.reminder.total;active=r['busy_upper_bound'];idle='?' if total is None else str(max(0,total-active))
+                queue_unknown=bool(r.get('unclassified'))
+                self.latest_state.update(queue_unrecognized=r.get('unclassified',0),queue_recognized_busy=r.get('busy',0)+r.get('research',0),
+                                         hud_configured=self.regions.configured,queue_box=self.regions.boxes.get('queue'))
+                total=self.reminder.total;active=r['busy_upper_bound'];idle='?' if total is None or queue_unknown else str(max(0,total-active))
                 pop=r.get('population');population='?' if pop is None else f'{pop[0]}/{pop[1]}'
                 state=housing or text or ('Paused' if r['context']=='pause' else reason)
                 if not self.detector.alerts_validated:state='Recognition validation unavailable - voice off'
@@ -208,9 +219,10 @@ class TCController(QObject):
                     # Build House / Housed and an idle Town Centre can be active together; name both.
                     names=[]
                     if housing:names.append(housing)
+                    if queue_unknown:names.append('Queue icon not recognized')
                     if text=='Check TC queues':names.append('Idle TC' if housing else 'Idle Town Centre')
                     label=' · '.join(names) or ('Housed' if text=='Population blocked' else 'Select your Town Centres' if total is None else 'Town Centres active' if active>=total else state)
-                    self.panel.present(game,total,idle,label,self.mute.isChecked(),bool(names) or text=='Population blocked')
+                    self.panel.present(game,total,idle,label,self.mute.isChecked(),bool(housing) or text in ('Population blocked','Check TC queues'))
                 else:self.panel.hide()
         self.sync_view(game,enabled)
         # Build-order cues own the shared Windows sound channel, including queued
@@ -225,10 +237,15 @@ class TCController(QObject):
             self.voice.update(bool(enabled and game and self.voice_active and not self.mute.isChecked()
                                    and self.detector.alerts_validated and now-self.last_good<=1.25),now,event=event)
         if now-self.last_diagnostic>=1:
-            try:self.diagnostics.write_text(json.dumps(dict(self.latest_state,foreground=bool(game),tc_view_requested=self.view_visible,tc_panel_visible=self.panel.isVisible(),build_view_requested=self.build_orders.view_visible if self.build_orders else None,enabled=enabled,owns_capture=self.owns_capture,mute=self.mute.isChecked(),validated=self.detector.alerts_validated,voice_active=self.voice_active,clip=self.voice.path,build_order_step=self.build_orders.progress.current.id if self.build_orders and self.build_orders.progress and self.build_orders.progress.current else None,build_order_pending=[s.id for s in self.build_orders.progress.pending] if self.build_orders and self.build_orders.progress else [],error=self.error),indent=2))
-            except OSError:pass
+            text=json.dumps(dict(self.latest_state,foreground=bool(game),tc_view_requested=self.view_visible,tc_panel_visible=self.panel.isVisible(),build_view_requested=self.build_orders.view_visible if self.build_orders else None,enabled=enabled,owns_capture=self.owns_capture,mute=self.mute.isChecked(),validated=self.detector.alerts_validated,voice_active=self.voice_active,clip=self.voice.path,build_order_step=self.build_orders.progress.current.id if self.build_orders and self.build_orders.progress and self.build_orders.progress.current else None,build_order_pending=[s.id for s in self.build_orders.progress.pending] if self.build_orders and self.build_orders.progress else [],error=self.error),indent=2)
+            if text!=self._last_diagnostic_text:
+                try:
+                    self.diagnostics.write_text(text,encoding="utf-8")
+                    self._last_diagnostic_text=text
+                except OSError:pass
             self.last_diagnostic=now
         if capture_enabled and game and self.future is None and now-self.last_frame>=.5:
             self.last_frame=now;self.future=self.executor.submit(self.capture_frame,game,self.epoch)
     def close(self):
         self.closed=True;self.timer.stop();self.invalidate();self.executor.shutdown(wait=False,cancel_futures=True);self.panel.close()
+

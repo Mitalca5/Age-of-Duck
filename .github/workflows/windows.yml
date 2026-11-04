@@ -1,0 +1,69 @@
+name: Windows checks
+
+on:
+  pull_request:
+  push:
+    branches: [Main]
+  workflow_dispatch:
+    inputs:
+      build_package:
+        description: 'Build an EXE and run packaged smoke tests'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  tests-and-package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests with published fixtures
+        run: >-
+          python -m unittest -v
+          test_bundle test_update_release test_screen_placement test_hud_regions
+          test_civ_coverage test_techtree_catalog test_packaging test_game_data
+          test_counter_targets test_reminder_sessions test_tc_lifecycle
+          test_update_io test_update_background test_editable_catalog
+          test_preference_io test_recs_provider test_fork_regressions
+          test_overlay_layout test_companion_controls test_companion_focus
+          test_hud_calibration test_settings_window test_tc_panel
+          test_housed_fallback test_villager_robustness test_requested_behaviors
+          test_performance_regressions
+          test_queue_skins
+          test_queue_learning
+      - name: Measure queue recognition on public screenshots
+        run: python scripts/benchmark_queue.py
+      - name: Validate the bundled game catalog
+        run: python check_game_data.py
+      - name: Verify recognition calibration approval
+        run: python -c "from tc_reminder.validation_gate import approved; assert approved(), 'Calibration fingerprint changed'"
+      - name: Build the Windows application
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        run: python -m PyInstaller --noconfirm --clean AgeOfDuck.spec
+      - name: Check packaged runtime resources
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        run: python scripts/check_bundle.py dist/AgeOfDuck
+      - name: Smoke test packaged startup and shutdown
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        run: python scripts/smoke_package.py dist/AgeOfDuck/AgeOfDuck.exe
+      - name: Upload package for manual Windows testing
+        if: github.event_name == 'workflow_dispatch' && inputs.build_package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgeOfDuck-windows-${{ github.sha }}
+          path: dist/AgeOfDuck/
+          if-no-files-found: error
+          retention-days: 7

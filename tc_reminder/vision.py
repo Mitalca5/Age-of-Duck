@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 from .clock_reader import ClockReader
 from .population import PopulationReader
 from .validation_gate import approved
+from .queue_portraits import VillagerPortraits
 
 from .paths import ROOT
 from hud_regions import FlashTracker, text_mask, REGIONS as HUD_REGIONS
@@ -30,6 +31,7 @@ class Detector:
         self.profile = profile or json.loads((ROOT / 'calibration.json').read_text())
         self.templates = [(t, gray(Image.open(ROOT / t['file']))) for t in self.profile['templates']]
         self.templates = [(t, (im>210).astype(np.uint8)*255 if t.get('binary') else im) for t,im in self.templates]
+        self.villager_portraits = VillagerPortraits(self.profile, ROOT)
         self.previous_clock = None
         self.clock_changed = None
         self.clock_edges = 0
@@ -54,14 +56,17 @@ class Detector:
             delta=size[0]-self.profile['size'][0];r[0]+=delta;r[2]+=delta
         return r
 
-    def matches(self, image, category, region, threshold):
+    def matches(self, image, category, region, threshold, prepared=None):
         x0, y0, x1, y1 = region
-        hay = gray(image.crop(region))
+        hay = gray(image.crop(region)) if prepared is None else prepared[0]
+        binary = None if prepared is None else prepared[1]
         hits = []
         for meta, template in self.templates:
             if meta['kind'] != category or template.shape[0] > hay.shape[0] or template.shape[1] > hay.shape[1]:
                 continue
-            search = (hay>210).astype(np.uint8)*255 if meta.get('binary') else hay
+            if meta.get('binary') and binary is None:
+                binary = (hay>210).astype(np.uint8)*255
+            search = binary if meta.get('binary') else hay
             result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
             # Bound candidate work even on pathological input.
             for _ in range(64):
@@ -84,6 +89,7 @@ class Detector:
         if self.regions is not None and self.regions.usable(image.size):return self.regions.build_canvas(image)
         target=tuple(self.profile['size'])
         if all(abs(a-b)<=4 for a,b in zip(image.size,target)):return image
+        if image.height==target[1]:return image
         # UI size follows height; preserve aspect ratio and anchor each region.
         if image.width>=640 and image.height>=480:
             return image.resize((round(image.width*target[1]/image.height),target[1]),Image.Resampling.BICUBIC)
@@ -158,21 +164,32 @@ class Detector:
             result['confident']=False
             result['reason']='Queue reaches calibrated region edge — possible overflow'
             return result
+        if result['unclassified']:
+            result['confident']=False
+            result['reason']='Queue icon not recognized — teach the villager in HUD setup'
+            return result
         result['reason'] = ('Clock stopped or not yet verified' if not result['advancing'] else
                             'Unmatched queue boxes ignored (TC allowlist)' if result['unknown'] or result['waiting'] else
                             'Screen evidence recognized; non-TC production excluded')
         return result
 
-    def analyze_queue(self,image,threshold=.86):
+    def analyze_queue(self,image,threshold=.86,learned=None):
         """Analyze actual queue pixels; usable on supplied top-left crops without claiming gameplay."""
         p=self.profile
+        if learned is None and self.regions is not None and image.info.get('hud'):
+            learned=getattr(self.regions,'villager_samples',None)
+        def portrait_match(tile):
+            trained=learned.match(tile,max(.96,threshold)) if learned is not None else None
+            return trained or self.villager_portraits.match(tile,max(.94,threshold))
         result={'busy':0,'research':0,'research_waiting':0,'waiting':0,'housed':0,
                 'busy_upper_bound':0,'non_tc':0,'hits':[],'unknown':[],'unclassified':0,'queue_overflow':False,'possible_housed':False}
         # These small regions are explicitly marked on actual screenshots.
         queue = self.rect('queue', image.size)
         queue[2]=min(queue[2],image.width)
+        hay = gray(image.crop(queue))
+        prepared = (hay, (hay>210).astype(np.uint8)*255)
         for kind in ('villager', 'research', 'research_waiting', 'housed', 'non_tc'):
-            result['hits'] += self.matches(image, kind, queue, max(.95,threshold) if kind=='non_tc' else threshold)
+            result['hits'] += self.matches(image, kind, queue, max(.95,threshold) if kind=='non_tc' else threshold, prepared)
         # Consolidate variant templates into ONE entry per queue slot.
         slots = {}
         for hit in result['hits']:
@@ -180,7 +197,10 @@ class Detector:
             slot = int((centre - queue[0])/p['queue_pitch'])
             if slot not in slots or slots[slot]['score'] < hit['score']:
                 slots[slot] = hit
-        rgb = np.asarray(image.convert('RGB'))
+        # Keep absolute indices, including the +/-3 frame search and bottom border.
+        # Only this top-left strip is read; copying a full 1440p/4K frame is wasteful.
+        rgb = np.asarray(image.crop((0, 0, min(image.width, queue[2]+4),
+                                    min(image.height, queue[1]+p['queue_height']+4))).convert('RGB'))
         for index, hit in slots.items():
             x = round(queue[0]+index*p['queue_pitch'])
             patch = rgb[queue[1]+2:queue[1]+35,x+2:x+35].astype(float)
@@ -215,7 +235,7 @@ class Detector:
         # right are terrain or noise.
         pitch = int(round(p['queue_pitch']))
         tile_count = int((queue[2]-queue[0])/p['queue_pitch'])
-        def has_frame(x, y):
+        def has_frame(x, y, check_tint=False):
             colour = rgb[max(0,y-1):y+p['queue_height']+1, x:x+pitch].astype(float)
             if colour.shape[0] < 8 or colour.shape[1] < pitch:
                 return False
@@ -227,7 +247,16 @@ class Detector:
             # Progress shading hides the frame on some tiles; the white hotkey letter in the
             # bottom-right corner (Q, A, Z ...) is on every queue tile.
             corner = rgb[y+18:y+p['queue_height'], x+14:x+pitch].astype(float)
-            return corner.size > 0 and np.count_nonzero(corner.min(2) > 215) >= 14
+            if corner.size > 0 and np.count_nonzero(corner.min(2) > 215) >= 14:
+                return True
+            # Some skins tint the border/hotkey along with progress. Coloured
+            # edges alone are not a frame: also require the blue-skin portrait.
+            if check_tint:
+                light = (colour.max(2)>80)&(colour.min(2)>35)
+                if np.count_nonzero(light[:4])>pitch*.6 and np.count_nonzero(light[-4:])>pitch*.6:
+                    tile = rgb[max(0,y):y+p['queue_height'],max(0,x):x+pitch]
+                    return portrait_match(tile) is not None
+            return False
         framed = {}
         for index in range(tile_count):
             if index in slots:
@@ -236,7 +265,7 @@ class Detector:
             # Another skin or a rescaled box can sit a few pixels off the calibrated grid.
             for dy in (0, -1, 1, -2, 2, -3, 3):
                 for dx in (0, -1, 1, -2, 2, -3, 3):
-                    if has_frame(x0+dx, queue[1]+dy):
+                    if has_frame(x0+dx, queue[1]+dy, check_tint=dx==0 and dy==0):
                         framed[index] = (x0+dx, queue[1]+dy)
                         break
                 if index in framed:
@@ -248,12 +277,23 @@ class Detector:
             if index >= row_end:
                 continue
             box = [x, y, x+pitch, y+p['queue_height']]
-            result['unknown'].append(box)
             art = rgb[y+2:y+35, x+2:x+35].astype(float)
             red = np.mean((art[:,:,0]>90)&(art[:,:,0]>1.6*art[:,:,1])&(art[:,:,0]>1.6*art[:,:,2]))
-            result['possible_housed'] |= bool(red>=.12)
             top = rgb[y+3:y+20, x+4:x+31].astype(float)
             gold = np.mean((top[:,:,0]>100)&(top[:,:,1]>65)&(top[:,:,0]>1.4*top[:,:,2])&(top[:,:,1]>1.3*top[:,:,2]))
+            # A custom skin can replace the dark portrait background with blue.
+            # Only an already framed, contiguous queue slot may use this fallback.
+            portrait = portrait_match(rgb[max(0,y):y+p['queue_height'], max(0,x):x+pitch])
+            if portrait is not None:
+                portrait['kind'] = 'housed' if red>=.12 else 'waiting' if gold>.85 else 'villager'
+                portrait['box'] = [v + (max(0,x) if i%2==0 else max(0,y))
+                                   for i,v in enumerate(portrait['box'])]
+                result['hits'].append(portrait)
+                if portrait['kind'] in ('housed','waiting'):
+                    result[portrait['kind']] += 1
+                continue
+            result['unknown'].append(box)
+            result['possible_housed'] |= bool(red>=.12)
             # A research tile turns green as its progress bar fills (Age up at 70% ...), which
             # no stored template covers. Green progress is research in progress.
             green = np.mean((art[:,:,1]>70)&(art[:,:,1]>1.25*art[:,:,0])&(art[:,:,1]>1.25*art[:,:,2]))
@@ -264,12 +304,15 @@ class Detector:
             else:
                 result['unclassified'] += 1
         # Recount now that green research tiles were found among the unclassified boxes.
+        result['busy'] = sum(h['kind']=='villager' for h in result['hits'])
         result['research'] = sum(h['kind']=='research' for h in result['hits'])
         # A queue tile nothing recognises might be Town Centre production in a state with no
         # stored picture (age-up progress, a queued unit with a count badge, another skin).
         # Treat it as possible activity: wrongly staying quiet beats a false idle alarm.
         result['busy_upper_bound'] = result['busy'] + result['research'] + result['unclassified']
         result['queue_overflow'] = any(index>=int((queue[2]-queue[0])/p['queue_pitch'])-1 and hit['kind']!='non_tc' for index,hit in slots.items())
+        result['queue_overflow'] |= any(h['name'].endswith('-portrait') and
+            h['box'][0] >= queue[0]+(tile_count-1)*p['queue_pitch'] for h in result['hits'])
         # Unmatched terrain/units cannot veto the user's explicit TC allowlist.
         # Only recognized TC activity at the boundary indicates possible truncation.
         return result

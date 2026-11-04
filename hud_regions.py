@@ -16,6 +16,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
+from preference_io import valid_size
+from tc_reminder.queue_samples import VillagerSamples
 
 CANVAS = (2560, 1440)
 ASPECT_TOLERANCE = 0.02
@@ -129,20 +131,26 @@ class HudRegions:
     # -- persistence ------------------------------------------------------------
     def load(self):
         self.boxes, self.size = {}, None
+        self.villager_samples = VillagerSamples()
         if not self.path:
             return
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
+            if not isinstance(data,dict):return
             boxes = {k: tuple(float(v) for v in data['boxes'][k]) for k in ORDER}
             if all(len(b) == 4 and 0 <= b[0] < b[2] <= 1 and 0 <= b[1] < b[3] <= 1 for b in boxes.values()):
-                self.boxes, self.size = boxes, tuple(data.get('size') or ()) or None
+                size=data.get('size')
+                if size and not valid_size(size):return
+                self.boxes, self.size = boxes, tuple(size) if size else None
+                self.villager_samples = VillagerSamples(data.get('villager_samples'))
         except (OSError, ValueError, KeyError, TypeError):
             self.boxes, self.size = {}, None
 
     def save(self):
         if not self.path:
             return
-        payload = {'version': 1, 'size': list(self.size or ()), 'boxes': {k: list(v) for k, v in self.boxes.items()}}
+        payload = {'version': 2, 'size': list(self.size or ()), 'boxes': {k: list(v) for k, v in self.boxes.items()},
+                   'villager_samples': self.villager_samples.encoded()}
         temp = self.path.with_suffix('.tmp')
         temp.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         temp.replace(self.path)
@@ -154,6 +162,7 @@ class HudRegions:
 
     def clear(self):
         self.boxes, self.size = {}, None
+        self.villager_samples = VillagerSamples()
         if self.path and self.path.exists():
             self.path.unlink()
 
@@ -164,7 +173,7 @@ class HudRegions:
 
     def usable(self, size):
         """Boxes apply while the game window has the aspect ratio they were drawn on."""
-        if not self.boxes:
+        if not self.boxes or not valid_size(size):
             return False
         if not self.size:
             return True
@@ -194,7 +203,9 @@ class HudRegions:
                 info['pop_flash_fraction'] = flash_fraction(crop)
             if key == 'queue':
                 scale = QUEUE_TILE / max(1, crop.height)
-                resized = crop.resize((max(1, round(crop.width * scale)), QUEUE_TILE), Image.Resampling.BICUBIC)
+                # Ignore pixels beyond the canonical queue before scaling a very wide, thin box.
+                crop = crop.crop((0, 0, min(crop.width, max(1, round(CANVAS[0] / scale))), crop.height))
+                resized = crop.resize((min(CANVAS[0], max(1, round(crop.width * scale))), QUEUE_TILE), Image.Resampling.BICUBIC)
                 canvas.paste(resized.crop((0, 0, min(resized.width, CANVAS[0]), QUEUE_TILE)), (0, 58))
                 continue
             self._paste_text(canvas, crop, spec)
@@ -218,7 +229,59 @@ class HudRegions:
         canvas.paste(part, (cx0 - round((box[0] - sx0) * scale), cy0 - round((box[1] - sy0) * scale)))
 
 
-def describe(raw, boxes, detector, villager_reader):
+def _text_cluster(mask, span):
+    """Bounding box of the line of text that overlaps `span` (x range) most; neighbours past a wider gap are ignored."""
+    count, _labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype('uint8'), connectivity=8)
+    # Colon dots are small but bridge the gaps inside a clock, so keep them for clustering.
+    blobs = sorted((tuple(int(v) for v in row[:4]) for row in stats[1:count] if row[4] >= 2))
+    if not blobs:
+        return mask_bbox(mask)
+    gap_limit = max(b[3] for b in blobs) * 0.3
+    clusters, current = [], [blobs[0]]
+    for blob in blobs[1:]:
+        if blob[0] - max(b[0] + b[2] for b in current) > gap_limit:
+            clusters.append(current)
+            current = []
+        current.append(blob)
+    clusters.append(current)
+
+    def overlap(cluster):
+        return min(span[1], max(b[0] + b[2] for b in cluster)) - max(span[0], min(b[0] for b in cluster))
+
+    best = max(clusters, key=overlap)
+    return (min(b[0] for b in best), min(b[1] for b in best),
+            max(b[0] + b[2] for b in best), max(b[1] + b[3] for b in best))
+
+
+def snap_to_text(frame, box, key):
+    """Tighten a rough box (frame pixels) around the text it nearly covers.
+
+    Looks a little beyond the box so a slightly-off click still finds the number. Returns the
+    fitted box in frame pixels, or None when no text is found (the box is then left alone).
+    """
+    kind = REGIONS[key]['mask']
+    if kind is None:
+        return None
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    reach_x = max(6, int((x1 - x0) * 0.35))
+    reach_y = max(5, int((y1 - y0) * 0.6))
+    sx0, sy0 = max(0, x0 - reach_x), max(0, y0 - reach_y)
+    sx1, sy1 = min(frame.width, x1 + reach_x), min(frame.height, y1 + reach_y)
+    if sx1 - sx0 < 4 or sy1 - sy0 < 4:
+        return None
+    mask = text_mask(frame.crop((sx0, sy0, sx1, sy1)), kind)
+    if int(mask.sum()) < 8:
+        return None
+    found = number_run(mask) if key == 'villagers' else _text_cluster(mask, (x0 - sx0, x1 - sx0))
+    if not found:
+        return None
+    bx0, by0, bx1, by1 = found
+    pad = 2
+    return (max(0, sx0 + bx0 - pad), max(0, sy0 + by0 - pad),
+            min(frame.width, sx0 + bx1 + pad), min(frame.height, sy0 + by1 + pad))
+
+
+def describe(raw, boxes, detector, villager_reader, learned=None):
     """Human-readable result of reading each box, for the set-up screen."""
     regions = HudRegions()
     regions.boxes = {k: tuple(boxes[k]) for k in ORDER}
@@ -233,8 +296,14 @@ def describe(raw, boxes, detector, villager_reader):
     out['villagers'] = str(villagers) if villagers is not None else ('text found, not readable' if _has_text(canvas, 'villagers') else 'nothing found')
     out['clock'] = 'clock text found' if _has_text(canvas, 'clock') else 'nothing found'
     try:
-        queue = detector.analyze_queue(canvas)
-        out['queue'] = f"{queue['busy']} villager, {queue['research']} research icons" if (queue['hits'] or queue['unknown']) else 'no icons found'
+        queue = detector.analyze_queue(canvas,learned=learned) if learned is not None else detector.analyze_queue(canvas)
+        if queue['hits'] or queue['unknown']:
+            out['queue'] = (f"{queue['busy']} villager, {queue['research']} research, "
+                            f"{queue['waiting']+queue['research_waiting']} waiting, {queue['housed']} housed")
+            if queue['unclassified']:
+                out['queue'] += f"; {queue['unclassified']} unrecognized — icon appearance may be unsupported"
+        else:
+            out['queue'] = 'no icons found'
     except Exception:
         out['queue'] = 'no icons found'
     return out

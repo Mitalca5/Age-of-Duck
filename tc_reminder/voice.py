@@ -31,18 +31,30 @@ class RepeatingVoice:
         self.advance(now)
         if not active:
             self.stop();return
+        if not self.active and self.next_due is not None and now<self.next_due:return False
         if event is not None and (event==self.last_event or event==self.pending_event):return
         if event is not None or self.next_due is None or now>=self.next_due:
             try:
                 with wave.open(self.path,'rb') as clip:duration=clip.getnframes()/clip.getframerate()
             except (OSError,wave.Error):duration=1.0
-            self.play(volume_file(self.path,RepeatingVoice.volume_percent),winsound.SND_FILENAME|winsound.SND_ASYNC|winsound.SND_NODEFAULT)
+            try:
+                self.play(volume_file(self.path,RepeatingVoice.volume_percent),winsound.SND_FILENAME|winsound.SND_ASYNC|winsound.SND_NODEFAULT)
+            except (OSError,RuntimeError,ValueError,wave.Error,EOFError):
+                self.active=False;self.pending_event=None;self.finishes=None
+                self.next_due=now+5
+                return False
             self.pending_event=event;self.finishes=now+duration
             self.next_due=now+max(1.0,duration+.1)
         self.active=True
+        return True
     def stop(self):
         if self.active:self.play(None,0)
         self.active=False;self.next_due=None;self.pending_event=None;self.finishes=None
+
+    def reset(self):
+        """Start a new cue session; ordinary pauses must keep acknowledged events."""
+        self.stop()
+        self.last_event=None
 
 
 def choose_cue(voice,housing,idle,event,now):
@@ -51,3 +63,4 @@ def choose_cue(voice,housing,idle,event,now):
     if housing=='Build House' and event!=voice.last_event:
         return 'build-house.wav',event,True
     return 'idle.wav',None,idle
+

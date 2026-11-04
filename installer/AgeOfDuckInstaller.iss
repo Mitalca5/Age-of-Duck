@@ -1,5 +1,5 @@
 #define MyAppName "Age of Duck"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "BubbleDuckz"
 #define MyAppExeName "AgeOfDuck.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\Age of Duck
 DefaultGroupName=Age of Duck
 DisableProgramGroupPage=yes
 OutputDir=..\installer-output
-OutputBaseFilename=AgeOfDuck-Setup-v2.0.0
+OutputBaseFilename=AgeOfDuck-Setup-v{#MyAppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -21,7 +21,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\duck.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=admin
-VersionInfoVersion=2.0.0.0
+VersionInfoVersion={#MyAppVersion}.0
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 

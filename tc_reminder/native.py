@@ -5,6 +5,7 @@ import time
 from ctypes import wintypes as w
 from pathlib import Path
 from PIL import ImageGrab
+from game_process import is_game_process
 
 u = c.WinDLL('user32', use_last_error=True)
 k = c.WinDLL('kernel32', use_last_error=True)
@@ -64,7 +65,7 @@ def game_window(hwnd, allow_minimized=False):
         size = w.DWORD(len(path))
         if not k.QueryFullProcessImageNameW(process, 0, path, c.byref(size)):
             return None
-        if Path(path.value).name.lower() not in ('aoe2de_s.exe', 'aoe2de.exe'):
+        if not is_game_process(Path(path.value).name):
             return None
     finally:
         k.CloseHandle(process)
@@ -155,7 +156,7 @@ def capture(game):
     # context but freezes capture; unrelated apps suspend both panels.
     if not game or companion_focused() or foreground_game()!=game:return None
     im=ImageGrab.grab(bbox=game[2],all_screens=True)
-    return im if foreground_game()==game else None
+    return im if not companion_focused() and foreground_game()==game else None
 
 
 def prepare_overlay(widget):
