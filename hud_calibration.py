@@ -11,7 +11,9 @@ from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPi
 from PyQt5.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                              QVBoxLayout, QWidget)
 
-from hud_regions import ORDER, REGIONS, describe, snap_to_text
+from hud_regions import ORDER, REGIONS, HudRegions, describe, snap_to_text
+from tc_reminder.queue_samples import VillagerSamples
+import numpy as np
 from tc_reminder import native
 
 COLORS = {
@@ -58,6 +60,8 @@ class RegionRow(QFrame):
         text.addWidget(self.title)
         text.addWidget(self.hint)
         self.reading = QLabel('')
+        self.reading.setWordWrap(True)
+        self.reading.setMaximumWidth(190)
         self.reading.setStyleSheet(f'color:{COLORS[key].name()};font-weight:600;')
         self.reading.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(self.dot)
@@ -94,6 +98,7 @@ class HudCalibrator(QWidget):
         self.regions = regions
         self.detector = detector
         self.villager_reader = villager_reader
+        self.learned = regions.villager_samples.copy()
         self.readouts = {}
         self.selected = ORDER[0]
         self.mode = None            # 'move' or 'resize'
@@ -192,6 +197,22 @@ class HudCalibrator(QWidget):
         self.preview.setStyleSheet('background:rgba(0,0,0,120);border:1px solid rgba(255,255,255,30);border-radius:8px;')
         self.preview.setToolTip('Close-up of what is inside the selected box')
         layout.addWidget(self.preview)
+        self.learn_controls = QWidget()
+        learn_layout = QVBoxLayout(self.learn_controls)
+        learn_layout.setContentsMargins(0,0,0,0)
+        self.learn_status = QLabel('If this icon is a training villager, teach it below. Changes apply when you Save.')
+        self.learn_status.setWordWrap(True)
+        learn_layout.addWidget(self.learn_status)
+        learn_buttons = QHBoxLayout()
+        self.learn_button = QPushButton('Learn first icon as villager')
+        self.forget_button = QPushButton('Forget learned icons')
+        self.learn_button.setToolTip('Put a training villager first in the queue. Teach male and female appearances separately.')
+        self.learn_button.clicked.connect(self.learn_first_villager)
+        self.forget_button.clicked.connect(self.forget_villagers)
+        learn_buttons.addWidget(self.learn_button)
+        learn_buttons.addWidget(self.forget_button)
+        learn_layout.addLayout(learn_buttons)
+        layout.addWidget(self.learn_controls)
         tips = QLabel('Scroll to resize · arrow keys nudge (Shift = faster) · Tab switches item · drag a round handle to stretch')
         tips.setStyleSheet('color:#9FB3C8;font-size:11px;')
         tips.setWordWrap(True)
@@ -232,6 +253,9 @@ class HudCalibrator(QWidget):
         if key not in self.boxes:
             return
         self.selected = key
+        self.learn_controls.setVisible(key=='queue')
+        self.panel.adjustSize()
+        self.panel.move((self.width()-self.panel.width())//2,max(10,self.height()-self.panel.height()-36))
         for name, row in self.rows.items():
             row.set_selected(name == key)
         self._update_preview()
@@ -264,9 +288,46 @@ class HudCalibrator(QWidget):
         self.setFocus()
 
     def save(self):
-        self.regions.set_boxes(self.fractions(), self.physical)
+        previous=(self.regions.boxes,self.regions.size,self.regions.villager_samples)
+        try:
+            self.regions.villager_samples=self.learned.copy()
+            self.regions.set_boxes(self.fractions(), self.physical)
+        except OSError:
+            self.regions.boxes,self.regions.size,self.regions.villager_samples=previous
+            self.select('queue')
+            self.learn_status.setText('Could not save HUD settings. Your previous settings are still active; try again.')
+            return
         self.saved.emit()
         self.close()
+
+    def learn_first_villager(self):
+        if self.frame is None:
+            self.learn_status.setText('No captured game image. Close setup and reopen it during a match.')
+            return
+        regions=HudRegions()
+        regions.boxes=self.fractions()
+        canvas=regions.build_canvas(self.frame)
+        queue=self.detector.analyze_queue(canvas,learned=self.learned)
+        first_hits=[h for h in queue['hits'] if 0<=(h['box'][0]+h['box'][2])/2<37.5]
+        first_unknown=[b for b in queue['unknown'] if 0<=b[0]<37.5]
+        if not first_hits and not first_unknown:
+            self.learn_status.setText('No queue tile found in the first position. Align the box with the first square icon.')
+            return
+        if any(h['kind']!='villager' for h in first_hits):
+            self.learn_status.setText('The first icon appears to be research, another unit, or blocked. Use a training villager.')
+            return
+        try:
+            self.learned.add(np.asarray(canvas.crop((0,58,37,95)).convert('RGB')))
+        except ValueError as error:
+            self.learn_status.setText(str(error))
+            return
+        self.learn_status.setText(f'{len(self.learned.entries)} villager appearance(s) learned. Press Save to apply; Cancel discards changes.')
+        self.test_read()
+
+    def forget_villagers(self):
+        self.learned=VillagerSamples()
+        self.learn_status.setText('Learned icons cleared for this draft. Press Save to apply.')
+        self.test_read()
 
     def snap(self, key, quiet=False):
         """Fit a number box tightly around the text nearest to it."""
@@ -289,7 +350,7 @@ class HudCalibrator(QWidget):
         raw = self.frame
         if raw is None:
             return
-        self.readouts = describe(raw, self.fractions(), self.detector, self.villager_reader)
+        self.readouts = describe(raw, self.fractions(), self.detector, self.villager_reader,learned=self.learned)
         for key, text in self.readouts.items():
             self.rows[key].reading.setText(text)
         self.update()
@@ -469,3 +530,4 @@ class HudCalibrator(QWidget):
             self.snap(self.selected, quiet=True)
         self.mode = None
         self.anchor = None
+

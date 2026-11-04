@@ -57,4 +57,15 @@ class TCLifecycleTests(unittest.TestCase):
         self.assertEqual(self.c.reminder.total,5)
         self.assertTrue(self.c.idle_alert)
 
+    def test_unknown_queue_shows_question_mark_without_losing_housing_reminder(self):
+        self.c.manual_tcs=3;self.c.reminder.shortfall_since=0
+        self.c.housing.update((10,15),True,11.5)
+        self.tick(unclassified=1,confident=False,busy_upper_bound=1,population=(10,15))
+        self.assertFalse(self.c.idle_alert)
+        self.assertEqual(self.c.housing_state,'Build House')
+        args=self.c.panel.present.call_args.args
+        self.assertEqual(args[2],'?')
+        self.assertIn('Queue icon not recognized',args[3])
+        self.assertNotIn('Idle TC',args[3])
+
 if __name__=='__main__':unittest.main()

@@ -208,7 +208,10 @@ class TCController(QObject):
                     self.blocked_since=None;self.blocked_last=0
                 self.housing_state=housing;self.idle_alert=text=='Check TC queues'
                 self.latest_state=dict(match_id=r["match_id"],new_match=r["new_match"],villagers=r.get("villagers"),build_orders_enabled=self.observer_enabled,population=r.get('population'),housing=housing,tc_alert=text,reason=reason,context=r['context'],advancing=r['advancing'],confident=r['confident'],remembered_tcs=self.reminder.total,active=r['busy_upper_bound'],voice_event=self.voice_event)
-                total=self.reminder.total;active=r['busy_upper_bound'];idle='?' if total is None else str(max(0,total-active))
+                queue_unknown=bool(r.get('unclassified'))
+                self.latest_state.update(queue_unrecognized=r.get('unclassified',0),queue_recognized_busy=r.get('busy',0)+r.get('research',0),
+                                         hud_configured=self.regions.configured,queue_box=self.regions.boxes.get('queue'))
+                total=self.reminder.total;active=r['busy_upper_bound'];idle='?' if total is None or queue_unknown else str(max(0,total-active))
                 pop=r.get('population');population='?' if pop is None else f'{pop[0]}/{pop[1]}'
                 state=housing or text or ('Paused' if r['context']=='pause' else reason)
                 if not self.detector.alerts_validated:state='Recognition validation unavailable - voice off'
@@ -216,9 +219,10 @@ class TCController(QObject):
                     # Build House / Housed and an idle Town Centre can be active together; name both.
                     names=[]
                     if housing:names.append(housing)
+                    if queue_unknown:names.append('Queue icon not recognized')
                     if text=='Check TC queues':names.append('Idle TC' if housing else 'Idle Town Centre')
                     label=' · '.join(names) or ('Housed' if text=='Population blocked' else 'Select your Town Centres' if total is None else 'Town Centres active' if active>=total else state)
-                    self.panel.present(game,total,idle,label,self.mute.isChecked(),bool(names) or text=='Population blocked')
+                    self.panel.present(game,total,idle,label,self.mute.isChecked(),bool(housing) or text in ('Population blocked','Check TC queues'))
                 else:self.panel.hide()
         self.sync_view(game,enabled)
         # Build-order cues own the shared Windows sound channel, including queued

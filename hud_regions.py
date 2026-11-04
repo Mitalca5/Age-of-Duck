@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from preference_io import valid_size
+from tc_reminder.queue_samples import VillagerSamples
 
 CANVAS = (2560, 1440)
 ASPECT_TOLERANCE = 0.02
@@ -130,6 +131,7 @@ class HudRegions:
     # -- persistence ------------------------------------------------------------
     def load(self):
         self.boxes, self.size = {}, None
+        self.villager_samples = VillagerSamples()
         if not self.path:
             return
         try:
@@ -140,13 +142,15 @@ class HudRegions:
                 size=data.get('size')
                 if size and not valid_size(size):return
                 self.boxes, self.size = boxes, tuple(size) if size else None
+                self.villager_samples = VillagerSamples(data.get('villager_samples'))
         except (OSError, ValueError, KeyError, TypeError):
             self.boxes, self.size = {}, None
 
     def save(self):
         if not self.path:
             return
-        payload = {'version': 1, 'size': list(self.size or ()), 'boxes': {k: list(v) for k, v in self.boxes.items()}}
+        payload = {'version': 2, 'size': list(self.size or ()), 'boxes': {k: list(v) for k, v in self.boxes.items()},
+                   'villager_samples': self.villager_samples.encoded()}
         temp = self.path.with_suffix('.tmp')
         temp.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         temp.replace(self.path)
@@ -158,6 +162,7 @@ class HudRegions:
 
     def clear(self):
         self.boxes, self.size = {}, None
+        self.villager_samples = VillagerSamples()
         if self.path and self.path.exists():
             self.path.unlink()
 
@@ -276,7 +281,7 @@ def snap_to_text(frame, box, key):
             min(frame.width, sx0 + bx1 + pad), min(frame.height, sy0 + by1 + pad))
 
 
-def describe(raw, boxes, detector, villager_reader):
+def describe(raw, boxes, detector, villager_reader, learned=None):
     """Human-readable result of reading each box, for the set-up screen."""
     regions = HudRegions()
     regions.boxes = {k: tuple(boxes[k]) for k in ORDER}
@@ -291,7 +296,7 @@ def describe(raw, boxes, detector, villager_reader):
     out['villagers'] = str(villagers) if villagers is not None else ('text found, not readable' if _has_text(canvas, 'villagers') else 'nothing found')
     out['clock'] = 'clock text found' if _has_text(canvas, 'clock') else 'nothing found'
     try:
-        queue = detector.analyze_queue(canvas)
+        queue = detector.analyze_queue(canvas,learned=learned) if learned is not None else detector.analyze_queue(canvas)
         if queue['hits'] or queue['unknown']:
             out['queue'] = (f"{queue['busy']} villager, {queue['research']} research, "
                             f"{queue['waiting']+queue['research_waiting']} waiting, {queue['housed']} housed")

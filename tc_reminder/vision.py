@@ -164,14 +164,23 @@ class Detector:
             result['confident']=False
             result['reason']='Queue reaches calibrated region edge — possible overflow'
             return result
+        if result['unclassified']:
+            result['confident']=False
+            result['reason']='Queue icon not recognized — teach the villager in HUD setup'
+            return result
         result['reason'] = ('Clock stopped or not yet verified' if not result['advancing'] else
                             'Unmatched queue boxes ignored (TC allowlist)' if result['unknown'] or result['waiting'] else
                             'Screen evidence recognized; non-TC production excluded')
         return result
 
-    def analyze_queue(self,image,threshold=.86):
+    def analyze_queue(self,image,threshold=.86,learned=None):
         """Analyze actual queue pixels; usable on supplied top-left crops without claiming gameplay."""
         p=self.profile
+        if learned is None and self.regions is not None and image.info.get('hud'):
+            learned=getattr(self.regions,'villager_samples',None)
+        def portrait_match(tile):
+            trained=learned.match(tile,max(.96,threshold)) if learned is not None else None
+            return trained or self.villager_portraits.match(tile,max(.94,threshold))
         result={'busy':0,'research':0,'research_waiting':0,'waiting':0,'housed':0,
                 'busy_upper_bound':0,'non_tc':0,'hits':[],'unknown':[],'unclassified':0,'queue_overflow':False,'possible_housed':False}
         # These small regions are explicitly marked on actual screenshots.
@@ -246,7 +255,7 @@ class Detector:
                 light = (colour.max(2)>80)&(colour.min(2)>35)
                 if np.count_nonzero(light[:4])>pitch*.6 and np.count_nonzero(light[-4:])>pitch*.6:
                     tile = rgb[max(0,y):y+p['queue_height'],max(0,x):x+pitch]
-                    return self.villager_portraits.match(tile,max(.94,threshold)) is not None
+                    return portrait_match(tile) is not None
             return False
         framed = {}
         for index in range(tile_count):
@@ -274,7 +283,7 @@ class Detector:
             gold = np.mean((top[:,:,0]>100)&(top[:,:,1]>65)&(top[:,:,0]>1.4*top[:,:,2])&(top[:,:,1]>1.3*top[:,:,2]))
             # A custom skin can replace the dark portrait background with blue.
             # Only an already framed, contiguous queue slot may use this fallback.
-            portrait = self.villager_portraits.match(rgb[max(0,y):y+p['queue_height'], max(0,x):x+pitch], max(.94,threshold))
+            portrait = portrait_match(rgb[max(0,y):y+p['queue_height'], max(0,x):x+pitch])
             if portrait is not None:
                 portrait['kind'] = 'housed' if red>=.12 else 'waiting' if gold>.85 else 'villager'
                 portrait['box'] = [v + (max(0,x) if i%2==0 else max(0,y))
