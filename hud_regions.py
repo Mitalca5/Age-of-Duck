@@ -292,7 +292,13 @@ def describe(raw, boxes, detector, villager_reader):
     out['clock'] = 'clock text found' if _has_text(canvas, 'clock') else 'nothing found'
     try:
         queue = detector.analyze_queue(canvas)
-        out['queue'] = f"{queue['busy']} villager, {queue['research']} research icons" if (queue['hits'] or queue['unknown']) else 'no icons found'
+        if queue['hits'] or queue['unknown']:
+            out['queue'] = (f"{queue['busy']} villager, {queue['research']} research, "
+                            f"{queue['waiting']+queue['research_waiting']} waiting, {queue['housed']} housed")
+            if queue['unclassified']:
+                out['queue'] += f"; {queue['unclassified']} unrecognized — icon appearance may be unsupported"
+        else:
+            out['queue'] = 'no icons found'
     except Exception:
         out['queue'] = 'no icons found'
     return out

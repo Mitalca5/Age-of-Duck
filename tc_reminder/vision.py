@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 from .clock_reader import ClockReader
 from .population import PopulationReader
 from .validation_gate import approved
+from .queue_portraits import VillagerPortraits
 
 from .paths import ROOT
 from hud_regions import FlashTracker, text_mask, REGIONS as HUD_REGIONS
@@ -30,6 +31,7 @@ class Detector:
         self.profile = profile or json.loads((ROOT / 'calibration.json').read_text())
         self.templates = [(t, gray(Image.open(ROOT / t['file']))) for t in self.profile['templates']]
         self.templates = [(t, (im>210).astype(np.uint8)*255 if t.get('binary') else im) for t,im in self.templates]
+        self.villager_portraits = VillagerPortraits(self.profile, ROOT)
         self.previous_clock = None
         self.clock_changed = None
         self.clock_edges = 0
@@ -257,12 +259,23 @@ class Detector:
             if index >= row_end:
                 continue
             box = [x, y, x+pitch, y+p['queue_height']]
-            result['unknown'].append(box)
             art = rgb[y+2:y+35, x+2:x+35].astype(float)
             red = np.mean((art[:,:,0]>90)&(art[:,:,0]>1.6*art[:,:,1])&(art[:,:,0]>1.6*art[:,:,2]))
-            result['possible_housed'] |= bool(red>=.12)
             top = rgb[y+3:y+20, x+4:x+31].astype(float)
             gold = np.mean((top[:,:,0]>100)&(top[:,:,1]>65)&(top[:,:,0]>1.4*top[:,:,2])&(top[:,:,1]>1.3*top[:,:,2]))
+            # A custom skin can replace the dark portrait background with blue.
+            # Only an already framed, contiguous queue slot may use this fallback.
+            portrait = self.villager_portraits.match(rgb[max(0,y):y+p['queue_height'], max(0,x):x+pitch], max(.94,threshold))
+            if portrait is not None:
+                portrait['kind'] = 'housed' if red>=.12 else 'waiting' if gold>.85 else 'villager'
+                portrait['box'] = [v + (max(0,x) if i%2==0 else max(0,y))
+                                   for i,v in enumerate(portrait['box'])]
+                result['hits'].append(portrait)
+                if portrait['kind'] in ('housed','waiting'):
+                    result[portrait['kind']] += 1
+                continue
+            result['unknown'].append(box)
+            result['possible_housed'] |= bool(red>=.12)
             # A research tile turns green as its progress bar fills (Age up at 70% ...), which
             # no stored template covers. Green progress is research in progress.
             green = np.mean((art[:,:,1]>70)&(art[:,:,1]>1.25*art[:,:,0])&(art[:,:,1]>1.25*art[:,:,2]))
@@ -273,12 +286,15 @@ class Detector:
             else:
                 result['unclassified'] += 1
         # Recount now that green research tiles were found among the unclassified boxes.
+        result['busy'] = sum(h['kind']=='villager' for h in result['hits'])
         result['research'] = sum(h['kind']=='research' for h in result['hits'])
         # A queue tile nothing recognises might be Town Centre production in a state with no
         # stored picture (age-up progress, a queued unit with a count badge, another skin).
         # Treat it as possible activity: wrongly staying quiet beats a false idle alarm.
         result['busy_upper_bound'] = result['busy'] + result['research'] + result['unclassified']
         result['queue_overflow'] = any(index>=int((queue[2]-queue[0])/p['queue_pitch'])-1 and hit['kind']!='non_tc' for index,hit in slots.items())
+        result['queue_overflow'] |= any(h['name'].endswith('-portrait') and
+            h['box'][0] >= queue[0]+(tile_count-1)*p['queue_pitch'] for h in result['hits'])
         # Unmatched terrain/units cannot veto the user's explicit TC allowlist.
         # Only recognized TC activity at the boundary indicates possible truncation.
         return result

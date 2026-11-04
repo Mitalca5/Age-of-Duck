@@ -42,6 +42,7 @@ jobs:
           test_hud_calibration test_settings_window test_tc_panel
           test_housed_fallback test_villager_robustness test_requested_behaviors
           test_performance_regressions
+          test_queue_skins
       - name: Measure queue recognition on public screenshots
         run: python scripts/benchmark_queue.py
       - name: Validate the bundled game catalog
