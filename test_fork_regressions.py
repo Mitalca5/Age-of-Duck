@@ -347,3 +347,25 @@ class UpdateShutdownTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+class CalibrationApprovalTests(unittest.TestCase):
+    def test_newline_variants_preserve_approval_but_content_changes_do_not(self):
+        import tc_reminder.validation_gate as gate
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'template.png').write_bytes(b'binary-template')
+            files={'calibration.json':'{\n "templates": [{"file":"template.png"}]\n}\n',
+                   'clock-calibration.json':'{\n "samples": []\n}\n',
+                   'population-glyphs.json':'{\n "glyphs": []\n}\n'}
+            with patch.object(gate,'ROOT',root):
+                for name,content in files.items():
+                    (root/name).write_bytes(content.replace('\n','\r\n').encode())
+                expected=gate.fingerprint()
+                (root/'validation-approval.json').write_text(json.dumps({'approved':True,'fingerprint':expected}))
+                for name,content in files.items():(root/name).write_bytes(content.encode())
+                self.assertTrue(gate.approved())
+                (root/'template.png').write_bytes(b'changed-template')
+                self.assertFalse(gate.approved())
+                (root/'template.png').write_bytes(b'binary-template')
+                (root/'population-glyphs.json').write_bytes(b'{"glyphs":[1]}')
+                self.assertFalse(gate.approved())
