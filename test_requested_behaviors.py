@@ -36,6 +36,13 @@ class TrayWorkflowTests(unittest.TestCase):
         self.assertTrue(overlay.process_checker.running)
         self.assertTrue(overlay.dismissed_to_tray)
 
+    def test_explicit_tray_quit_allows_window_close(self):
+        overlay=self.overlay();application=Mock()
+        overlay.quit_application(application)
+        application.quit.assert_called_once()
+        event=QCloseEvent();overlay.closeEvent(event)
+        self.assertTrue(event.isAccepted())
+
     def test_windows_close_command_uses_hide_to_tray(self):
         overlay=self.overlay()
         send=ctypes.windll.user32.SendMessageW

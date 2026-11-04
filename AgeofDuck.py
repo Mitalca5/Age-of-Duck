@@ -1094,9 +1094,16 @@ class Overlay(QWidget):
 
     def closeEvent(self, event):
         # Alt+F4 hides the window; only the tray's Quit action stops the application.
+        if getattr(self, 'exiting', False):
+            event.accept()
+            return
         event.ignore()
         self.dismissed_to_tray = True
         self.hide()
+
+    def quit_application(self, app):
+        self.exiting = True
+        app.quit()
 
     def restore_from_tray(self):
         self.dismissed_to_tray = False
@@ -1480,7 +1487,7 @@ def main():
     action_check_updates.triggered.connect(update_controller.check)
     action_discord.triggered.connect(lambda: webbrowser.open("https://discord.gg/hWsa7KS9nw"))
     action_donate.triggered.connect(lambda: webbrowser.open("https://paypal.me/mywebdeveloper"))
-    action_quit.triggered.connect(app.quit)
+    action_quit.triggered.connect(lambda: overlay.quit_application(app))
 
     menu = QMenu()
     menu.addAction(action_show)
